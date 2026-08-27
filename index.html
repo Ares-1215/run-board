@@ -128,6 +128,31 @@ table.dt td.num{text-align:right}
 .late-warn{color:var(--serious); font-weight:600}
 .late-crit{color:var(--crit); font-weight:700}
 
+/* 出勤點陣 */
+.mx-wrap{max-height:560px; overflow:auto; border:1px solid var(--grid); border-radius:9px}
+table.mx{border-collapse:separate; border-spacing:0; font-size:12.5px; width:max-content; min-width:100%}
+.mx th,.mx td{padding:4px 6px; white-space:nowrap; border-bottom:1px solid var(--grid)}
+.mx thead th{position:sticky; top:0; background:var(--surface); z-index:3;
+  color:var(--muted); font-weight:600; border-bottom:1px solid var(--axis); text-align:center; line-height:1.25}
+.mx thead th:first-child{z-index:4; text-align:left}
+.mx td:first-child,.mx thead th:first-child{position:sticky; left:0; background:var(--surface);
+  max-width:172px; overflow:hidden; text-overflow:ellipsis; z-index:2}
+.mx td.c{text-align:center; font-variant-numeric:tabular-nums}
+.mx td.num{text-align:right; font-variant-numeric:tabular-nums}
+.mx thead th span{font-weight:400; font-size:10.5px}
+.d-run{color:var(--c1)} .d-cx{color:var(--crit); font-weight:700} .d-no{color:var(--grid)}
+
+/* 每日加開 */
+details.day{border:1px solid var(--ring); border-radius:12px; background:var(--surface); margin-bottom:10px}
+details.day summary{cursor:pointer; padding:12px 16px; display:flex; flex-wrap:wrap; gap:10px;
+  align-items:baseline; list-style:none; font-size:14.5px}
+details.day summary::-webkit-details-marker{display:none}
+details.day summary::before{content:"▸"; color:var(--muted); margin-right:2px}
+details.day[open] summary::before{content:"▾"}
+details.day summary b{font-weight:700}
+details.day summary .cnts{font-size:12.5px; color:var(--ink2)}
+details.day .body{padding:0 16px 14px; overflow-x:auto}
+
 /* tooltip */
 #tt{position:fixed; z-index:99; pointer-events:none; display:none; max-width:270px;
   background:var(--surface); border:1px solid var(--axis); border-radius:9px;
@@ -204,6 +229,7 @@ footer .wrap{display:grid; gap:4px}
 
 <nav class="tabs"><div class="wrap tabs-in" id="tabbar">
   <button class="tab on" data-p="ov">總覽</button>
+  <button class="tab" data-p="rs">班次名冊</button>
   <button class="tab" data-p="ot">加班分析</button>
   <button class="tab" data-p="dl">準點延誤</button>
   <button class="tab" data-p="ld">積載運能</button>
@@ -225,6 +251,7 @@ footer .wrap{display:grid; gap:4px}
 
 <main class="wrap">
   <section class="panel on" id="p-ov"></section>
+  <section class="panel" id="p-rs"></section>
   <section class="panel" id="p-ot"></section>
   <section class="panel" id="p-dl"></section>
   <section class="panel" id="p-ld"></section>
@@ -609,6 +636,101 @@ function pOverview(root){
   root.append(g);
 }
 
+function pRoster(root){
+  const rows=filtered();
+  const daysAll=[...new Set(rows.map(r=>r.day))].sort();
+  const wdOf=d=>new Date(d+"T00:00").getDay();
+  const wdDays=daysAll.filter(d=>wdOf(d)>=1&&wdOf(d)<=5);
+  const satDays=daysAll.filter(d=>wdOf(d)===6);
+
+  /* 正班：每班每天狀態 */
+  const reg=new Map();
+  for(const r of rows){
+    if(r.category!=="正班")continue;
+    let t=reg.get(r.trip_code);
+    if(!t){t={code:r.trip_code,name:r.trip_name,dest:destName(r.rt_to),days:new Map(),deps:[],loads:[]};reg.set(r.trip_code,t);}
+    if(!r.canceled)t.days.set(r.day,"run");
+    else if(!t.days.has(r.day))t.days.set(r.day,"cx");
+    if(!r.canceled&&isDep(r)){const v=opMin(r.act_dep??r.sched_dep); if(v!=null)t.deps.push(v);}
+    if(!r.canceled&&r.load_pct!=null)t.loads.push(r.load_pct);
+  }
+
+  const bar=el("div","filters");
+  const q=el("input"); q.placeholder="搜班次、迄站…";
+  q.style.cssText="border:1px solid var(--grid);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:14px;flex:1;min-width:160px;max-width:340px";
+  bar.append(q);
+  root.append(bar);
+  const holder=el("div"); root.append(holder);
+
+  function matrixHtml(days,trips){
+    const head=`<tr><th>班次</th><th>迄站</th><th>均發車</th><th>出勤</th><th>積載均</th>`+
+      days.map(d=>`<th>${+d.slice(8)}<br><span>${WD[wdOf(d)]}</span></th>`).join("")+`</tr>`;
+    const body=trips.map(t=>{
+      const n=days.filter(d=>t.days.get(d)==="run").length;
+      return `<tr><td title="${esc(t.name)}">${esc(t.name)}</td><td>${esc(t.dest)}</td>`+
+        `<td class="num">${t.deps.length?opFmt(Math.round(avg(t.deps))):"–"}</td>`+
+        `<td class="num">${n}/${days.length}</td><td class="num">${t.loads.length?pct(avg(t.loads)):"–"}</td>`+
+        days.map(d=>{const s=t.days.get(d);
+          return `<td class="c" title="${d.slice(5)} ${s==="run"?"有開":s==="cx"?"取消":"未開"}">`+
+            (s==="run"?`<span class="d-run">●</span>`:s==="cx"?`<span class="d-cx">✕</span>`:`<span class="d-no">·</span>`)+`</td>`;}).join("")+`</tr>`;
+    }).join("");
+    return `<div class="mx-wrap"><table class="mx"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  }
+  function tripsFor(days,kw){
+    let ts=[...reg.values()].filter(t=>days.some(d=>t.days.has(d)));
+    if(kw)ts=ts.filter(t=>t.name.includes(kw)||t.dest.includes(kw));
+    ts.sort((a,b)=>((a.deps.length?avg(a.deps):9e9)-(b.deps.length?avg(b.deps):9e9))||a.code.localeCompare(b.code));
+    return ts;
+  }
+
+  /* 每日加開（加班/增開/追加/過路） */
+  const OTC=["加班","增開","追加","過路"];
+  const ots=[...tripMap(rows).values()].filter(t=>OTC.includes(t.category));
+  const otByDay={};
+  for(const t of ots)(otByDay[t.day]??=[]).push(t);
+
+  function otHtml(kw){
+    const daysDesc=[...daysAll].reverse().filter(d=>otByDay[d]?.length);
+    return daysDesc.map((d,i)=>{
+      let list=otByDay[d];
+      if(kw)list=list.filter(t=>t.name.includes(kw)||t.dest.includes(kw));
+      if(!list.length)return "";
+      const cnt=OTC.map(c=>{const n=list.filter(t=>t.category===c&&!t.canceled).length;
+        return n?`<span class="cat-pill" style="background:${CATC[c]}">${c} ${n}</span>`:"";}).filter(Boolean).join(" ");
+      const cxN=list.filter(t=>t.canceled).length;
+      const rows2=[...list].sort((a,b)=>OTC.indexOf(a.category)-OTC.indexOf(b.category)||((a.dep??9e9)-(b.dep??9e9)))
+        .map(t=>`<tr class="${t.canceled?"cx":""}"><td><span class="cat-pill" style="background:${CATC[t.category]}">${t.category}</span></td>`+
+          `<td>${esc(t.name)}</td><td>${esc(t.dest)}</td>`+
+          `<td class="num">${t.canceled?"取消":t.dep!=null?opFmt(t.dep):"–"}</td>`+
+          `<td class="num">${t.loads.length?pct(avg(t.loads)):"–"}</td></tr>`).join("");
+      return `<details class="day"${i<3?" open":""}><summary><b>${d.slice(5).replace("-","/")}（週${WD[wdOf(d)]}）</b>`+
+        `<span class="cnts">${cnt}${cxN?`　取消 ${cxN}`:""}</span></summary>`+
+        `<div class="body"><table class="dt"><tr><th>類別</th><th>班次</th><th>迄站</th><th>發車</th><th>積載</th></tr>${rows2}</table></div></details>`;
+    }).join("");
+  }
+
+  function draw(){
+    const kw=q.value.trim();
+    const wdT=tripsFor(wdDays,kw), saT=tripsFor(satDays,kw);
+    holder.innerHTML="";
+    const c1=card("平日正班班表（週一至週五）",
+      `${wdT.length} 個班次 × ${wdDays.length} 個發送日。● 有開　✕ 取消　· 未開；依平均發車時間排序`,null);
+    c1.querySelector(".scroll-x").innerHTML=matrixHtml(wdDays,wdT);
+    holder.append(c1);
+    if(satDays.length){
+      const c2=card("週六班表",`${saT.length} 個班次 × ${satDays.length} 個週六（週日全站休）`,null);
+      c2.querySelector(".scroll-x").innerHTML=matrixHtml(satDays,saT);
+      holder.append(c2);
+    }
+    const c3=el("section","card",`<div class="card-head"><h3>每日加開清單</h3></div>`+
+      `<p class="sub">加班、增開、追加、過路（＋秀）逐日列出，點日期展開；發車為實際離站（無則表定）</p>`);
+    const box=el("div"); box.innerHTML=otHtml(kw); c3.append(box);
+    holder.append(c3);
+  }
+  q.addEventListener("input",()=>{clearTimeout(q._t); q._t=setTimeout(draw,250);});
+  draw();
+}
+
 function pOvertime(root){
   const rows=filtered(), trips=[...tripMap(rows).values()].filter(t=>!t.canceled);
   const ot=trips.filter(t=>t.category==="加班"||t.category==="增開");
@@ -829,7 +951,7 @@ function pDetail(root){
 }
 
 /* ---------- render ---------- */
-const PANELS={ov:pOverview,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
+const PANELS={ov:pOverview,rs:pRoster,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
 let CUR="ov";
 function render(){
   const root=$("#p-"+CUR);
