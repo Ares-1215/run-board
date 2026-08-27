@@ -141,6 +141,10 @@ table.mx{border-collapse:separate; border-spacing:0; font-size:12.5px; width:max
 .mx td.num{text-align:right; font-variant-numeric:tabular-nums}
 .mx thead th span{font-weight:400; font-size:10.5px}
 .d-run{color:var(--c1)} .d-cx{color:var(--crit); font-weight:700} .d-no{color:var(--grid)}
+.mx tr.grp td{background:var(--page); color:var(--ink2); font-weight:700; font-size:12.5px;
+  border-bottom:1px solid var(--axis); padding-top:7px; padding-bottom:5px}
+.shift-tag{display:inline-block; border:1px solid var(--grid); border-radius:999px;
+  padding:0 8px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
 
 /* 每日加開 */
 details.day{border:1px solid var(--ring); border-radius:12px; background:var(--surface); margin-bottom:10px}
@@ -378,6 +382,10 @@ const hm2min = t=>{if(!t)return null;const m=/^(\d{1,2}):(\d{2})/.exec(t);return
 const opMin = t=>{const v=hm2min(t); return v==null?null:(v<720?v+1440:v);};   // 營運日 12:00 起算
 const opFmt = v=>{v=v%1440; return String(Math.floor(v/60)).padStart(2,"0")+":"+String(v%60).padStart(2,"0");};
 const isDep = r=>!r.canceled && r.leg_from && (r.leg_from.startsWith("4106")||r.leg_from.startsWith("4150"));
+const fromZone = r=>r.leg_from && (r.leg_from.startsWith("4106")||r.leg_from.startsWith("4150"));
+/* 班別歸屬（表定優先）：發送 15:00–01:00、到著 01:00–09:00、其餘為日間 */
+function shiftOf(v){ if(v==null)return null;
+  if(v>=900&&v<1500)return "發送"; if(v>=1500&&v<1980)return "到著"; return "日間"; }
 const destName = s=>(s||"").replace(/^\d{4}/,"");
 const WD=["日","一","二","三","四","五","六"];
 
@@ -389,11 +397,12 @@ function tripMap(rows){
     const k=r.day+"|"+r.trip_code+"|"+r.category;
     let t=m.get(k);
     if(!t){t={day:r.day,code:r.trip_code,name:r.trip_name,category:r.category,
-      legs:0,cx:0,loads:[],dep:null,dest:destName(r.rt_to),stations:new Set()}; m.set(k,t);}
+      legs:0,cx:0,loads:[],dep:null,sdep:null,dest:destName(r.rt_to),stations:new Set()}; m.set(k,t);}
     t.legs++; if(r.canceled)t.cx++;
     t.stations.add(r.station);
     if(r.load_pct!=null&&!r.canceled)t.loads.push(r.load_pct);
     if(!r.canceled&&isDep(r)){const d=opMin(r.act_dep??r.sched_dep); if(d!=null&&(t.dep==null||d<t.dep))t.dep=d;}
+    if(fromZone(r)){const sv=opMin(r.sched_dep)??opMin(r.act_dep); if(sv!=null&&(t.sdep==null||sv<t.sdep))t.sdep=sv;}
   }
   for(const t of m.values()) t.canceled = t.cx===t.legs;
   return m;
@@ -648,24 +657,33 @@ function pRoster(root){
   for(const r of rows){
     if(r.category!=="正班")continue;
     let t=reg.get(r.trip_code);
-    if(!t){t={code:r.trip_code,name:r.trip_name,dest:destName(r.rt_to),days:new Map(),deps:[],loads:[]};reg.set(r.trip_code,t);}
+    if(!t){t={code:r.trip_code,name:r.trip_name,dest:destName(r.rt_to),days:new Map(),deps:[],loads:[],sdep:null};reg.set(r.trip_code,t);}
     if(!r.canceled)t.days.set(r.day,"run");
     else if(!t.days.has(r.day))t.days.set(r.day,"cx");
     if(!r.canceled&&isDep(r)){const v=opMin(r.act_dep??r.sched_dep); if(v!=null)t.deps.push(v);}
+    if(fromZone(r)){const sv=opMin(r.sched_dep)??opMin(r.act_dep); if(sv!=null&&(t.sdep==null||sv<t.sdep))t.sdep=sv;}
     if(!r.canceled&&r.load_pct!=null)t.loads.push(r.load_pct);
   }
 
+  let sf="";   // 班別篩選：'' 全部
   const bar=el("div","filters");
   const q=el("input"); q.placeholder="搜班次、迄站…";
   q.style.cssText="border:1px solid var(--grid);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:14px;flex:1;min-width:160px;max-width:340px";
-  bar.append(q);
+  const shWrap=el("div","chips");
+  for(const [lbl,v] of [["全部班別",""],["發送","發送"],["到著","到著"],["日間","日間"]]){
+    const b=el("button","chip"+(v===""?" on":""),lbl); b.dataset.sf=v;
+    b.addEventListener("click",()=>{sf=v;
+      shWrap.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c===b)); draw();});
+    shWrap.append(b);
+  }
+  bar.append(q,shWrap);
   root.append(bar);
   const holder=el("div"); root.append(holder);
 
   function matrixHtml(days,trips){
     const head=`<tr><th>班次</th><th>迄站</th><th>均發車</th><th>出勤</th><th>積載均</th>`+
       days.map(d=>`<th>${+d.slice(8)}<br><span>${WD[wdOf(d)]}</span></th>`).join("")+`</tr>`;
-    const body=trips.map(t=>{
+    const rowHtml=t=>{
       const n=days.filter(d=>t.days.get(d)==="run").length;
       return `<tr><td title="${esc(t.name)}">${esc(t.name)}</td><td>${esc(t.dest)}</td>`+
         `<td class="num">${t.deps.length?opFmt(Math.round(avg(t.deps))):"–"}</td>`+
@@ -673,7 +691,18 @@ function pRoster(root){
         days.map(d=>{const s=t.days.get(d);
           return `<td class="c" title="${d.slice(5)} ${s==="run"?"有開":s==="cx"?"取消":"未開"}">`+
             (s==="run"?`<span class="d-run">●</span>`:s==="cx"?`<span class="d-cx">✕</span>`:`<span class="d-no">·</span>`)+`</td>`;}).join("")+`</tr>`;
-    }).join("");
+    };
+    const gs=[["發送","15:00 至 01:00"],["到著","01:00 至 09:00"],["日間","09:00 至 15:00"],["時間不明",""]];
+    const bySh={};
+    for(const t of trips){const s=t.sdep!=null?shiftOf(t.sdep):"時間不明";(bySh[s]??=[]).push(t);}
+    let body="";
+    for(const [s,rng] of gs){
+      const list=bySh[s]||[];
+      if(!list.length||(sf&&s!==sf))continue;
+      body+=`<tr class="grp"><td>${s}${rng?"時段　"+rng:""}（${list.length} 班）</td><td colspan="${4+days.length}"></td></tr>`;
+      body+=list.map(rowHtml).join("");
+    }
+    if(!body)body=`<tr><td colspan="${5+days.length}" style="color:var(--muted)">此班別沒有班次</td></tr>`;
     return `<div class="mx-wrap"><table class="mx"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
   function tripsFor(days,kw){
@@ -694,18 +723,20 @@ function pRoster(root){
     return daysDesc.map((d,i)=>{
       let list=otByDay[d];
       if(kw)list=list.filter(t=>t.name.includes(kw)||t.dest.includes(kw));
+      if(sf)list=list.filter(t=>t.sdep!=null&&shiftOf(t.sdep)===sf);
       if(!list.length)return "";
       const cnt=OTC.map(c=>{const n=list.filter(t=>t.category===c&&!t.canceled).length;
         return n?`<span class="cat-pill" style="background:${CATC[c]}">${c} ${n}</span>`:"";}).filter(Boolean).join(" ");
       const cxN=list.filter(t=>t.canceled).length;
       const rows2=[...list].sort((a,b)=>OTC.indexOf(a.category)-OTC.indexOf(b.category)||((a.dep??9e9)-(b.dep??9e9)))
         .map(t=>`<tr class="${t.canceled?"cx":""}"><td><span class="cat-pill" style="background:${CATC[t.category]}">${t.category}</span></td>`+
+          `<td><span class="shift-tag">${t.sdep!=null?shiftOf(t.sdep):"–"}</span></td>`+
           `<td>${esc(t.name)}</td><td>${esc(t.dest)}</td>`+
           `<td class="num">${t.canceled?"取消":t.dep!=null?opFmt(t.dep):"–"}</td>`+
           `<td class="num">${t.loads.length?pct(avg(t.loads)):"–"}</td></tr>`).join("");
       return `<details class="day"${i<3?" open":""}><summary><b>${d.slice(5).replace("-","/")}（週${WD[wdOf(d)]}）</b>`+
         `<span class="cnts">${cnt}${cxN?`　取消 ${cxN}`:""}</span></summary>`+
-        `<div class="body"><table class="dt"><tr><th>類別</th><th>班次</th><th>迄站</th><th>發車</th><th>積載</th></tr>${rows2}</table></div></details>`;
+        `<div class="body"><table class="dt"><tr><th>類別</th><th>班別</th><th>班次</th><th>迄站</th><th>發車</th><th>積載</th></tr>${rows2}</table></div></details>`;
     }).join("");
   }
 
@@ -714,7 +745,7 @@ function pRoster(root){
     const wdT=tripsFor(wdDays,kw), saT=tripsFor(satDays,kw);
     holder.innerHTML="";
     const c1=card("平日正班班表（週一至週五）",
-      `${wdT.length} 個班次 × ${wdDays.length} 個發送日。● 有開　✕ 取消　· 未開；依平均發車時間排序`,null);
+      `${wdT.length} 個班次 × ${wdDays.length} 個發送日，依班別分段（表定離站優先歸班）。● 有開　✕ 取消　· 未開；段內依平均發車時間排序`,null);
     c1.querySelector(".scroll-x").innerHTML=matrixHtml(wdDays,wdT);
     holder.append(c1);
     if(satDays.length){
@@ -723,7 +754,7 @@ function pRoster(root){
       holder.append(c2);
     }
     const c3=el("section","card",`<div class="card-head"><h3>每日加開清單</h3></div>`+
-      `<p class="sub">加班、增開、追加、過路（＋秀）逐日列出，點日期展開；發車為實際離站（無則表定）</p>`);
+      `<p class="sub">加班、增開、追加、過路（＋秀）逐日列出，點日期展開；班別依表定離站歸屬，發車欄為實際離站（無則表定）</p>`);
     const box=el("div"); box.innerHTML=otHtml(kw); c3.append(box);
     holder.append(c3);
   }
