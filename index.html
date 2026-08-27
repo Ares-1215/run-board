@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>彰化發送運行看板</title>
+<style>
+:root{
+  color-scheme: light;
+  --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100; --c5:#e87ba4;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --good-text:#006300;
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --page:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500; --c5:#d55181;
+  --good-text:#0ca30c;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500; --c5:#d55181;
+    --good-text:#0ca30c;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--page); color:var(--ink);
+  font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit; color:inherit}
+.wrap{max-width:1180px; margin:0 auto; padding:0 16px}
+
+/* ---------- header ---------- */
+header.top{border-bottom:1px solid var(--grid); background:var(--surface)}
+.top-in{display:flex; align-items:center; gap:14px; padding:14px 0}
+.brand{font-size:19px; font-weight:700; letter-spacing:.02em; white-space:nowrap}
+.brand small{display:block; font-size:12px; font-weight:400; color:var(--muted); letter-spacing:.05em}
+.top-sp{flex:1}
+.top-in .ubtn{border:1px solid var(--grid); background:transparent; border-radius:8px;
+  padding:6px 12px; cursor:pointer; font-size:13px; color:var(--ink2); white-space:nowrap}
+.top-in .ubtn:hover{border-color:var(--axis)}
+#uname{font-size:13px; color:var(--muted); white-space:nowrap}
+
+/* ---------- tabs ---------- */
+nav.tabs{position:sticky; top:0; z-index:20; background:var(--page);
+  border-bottom:1px solid var(--grid)}
+.tabs-in{display:flex; gap:2px; overflow-x:auto; scrollbar-width:none}
+.tabs-in::-webkit-scrollbar{display:none}
+.tab{border:0; background:transparent; padding:11px 15px; cursor:pointer; font-size:14.5px;
+  color:var(--ink2); border-bottom:2px solid transparent; white-space:nowrap; flex-shrink:0}
+.tab.on{color:var(--ink); font-weight:700; border-bottom-color:var(--c1)}
+
+/* ---------- filter row ---------- */
+.filters{display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:14px 0 4px}
+.filters select{border:1px solid var(--grid); background:var(--surface); color:var(--ink);
+  border-radius:8px; padding:6px 10px; font:inherit; font-size:14px}
+.chips{display:flex; gap:6px}
+.chip{border:1px solid var(--grid); background:var(--surface); border-radius:999px;
+  padding:5px 14px; cursor:pointer; font-size:13.5px; color:var(--ink2)}
+.chip.on{background:var(--c1); border-color:var(--c1); color:#fff; font-weight:600}
+#loadState{font-size:13px; color:var(--muted); margin-left:auto}
+
+/* ---------- layout ---------- */
+main{padding:12px 0 48px}
+.panel{display:none}
+.panel.on{display:block}
+.grid{display:grid; gap:14px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--surface); border:1px solid var(--ring); border-radius:12px;
+  padding:16px 18px; min-width:0}
+.card h3{margin:0 0 2px; font-size:15.5px}
+.card .sub{font-size:12.5px; color:var(--muted); margin:0 0 12px}
+.card-head{display:flex; align-items:baseline; gap:8px}
+.card-head .sp{flex:1}
+.tbtn{border:1px solid var(--grid); background:transparent; border-radius:6px;
+  padding:2px 10px; font-size:12px; color:var(--ink2); cursor:pointer}
+.tbtn.on{background:var(--c1); color:#fff; border-color:var(--c1)}
+
+/* KPI tiles */
+.kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:14px 0}
+.kpi{background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:13px 16px}
+.kpi .k{font-size:12.5px; color:var(--muted)}
+.kpi .v{font-size:26px; font-weight:700; line-height:1.25}
+.kpi .v small{font-size:14px; font-weight:400; color:var(--ink2)}
+.kpi .d{font-size:12px; color:var(--ink2)}
+.kpi.hero .v{font-size:32px}
+
+/* legend */
+.legend{display:flex; flex-wrap:wrap; gap:12px; font-size:12.5px; color:var(--ink2); margin:6px 0 2px}
+.legend b{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px}
+
+/* charts */
+.chart{width:100%; overflow:visible}
+.chart text{font:11px system-ui,"Segoe UI","Microsoft JhengHei",sans-serif; fill:var(--muted)}
+.chart .vlab{fill:var(--ink2); font-variant-numeric:tabular-nums}
+.chart line.g{stroke:var(--grid); stroke-width:1}
+.chart line.ax{stroke:var(--axis); stroke-width:1}
+.scroll-x{overflow-x:auto}
+
+/* bar list */
+.blist{display:grid; gap:7px; margin-top:6px}
+.brow{display:grid; grid-template-columns:minmax(90px,180px) 1fr 52px; gap:10px; align-items:center; font-size:13px}
+.brow .n{color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.brow .bar{height:8px; border-radius:4px; background:var(--c1); min-width:2px}
+.brow .v{text-align:right; font-variant-numeric:tabular-nums; color:var(--ink)}
+.brow .v small{color:var(--muted)}
+
+/* tables */
+table.dt{width:100%; border-collapse:collapse; font-size:13px}
+table.dt th{color:var(--muted); font-weight:600; text-align:left; padding:6px 8px;
+  border-bottom:1px solid var(--axis); white-space:nowrap}
+table.dt td{padding:5.5px 8px; border-bottom:1px solid var(--grid); white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+table.dt tr.cx td{color:var(--muted); text-decoration:line-through}
+table.dt td.num{text-align:right}
+.cat-pill{display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; color:#fff}
+.late-good{color:var(--good-text); font-weight:600}
+.late-warn{color:var(--serious); font-weight:600}
+.late-crit{color:var(--crit); font-weight:700}
+
+/* tooltip */
+#tt{position:fixed; z-index:99; pointer-events:none; display:none; max-width:270px;
+  background:var(--surface); border:1px solid var(--axis); border-radius:9px;
+  padding:9px 12px; font-size:12.5px; box-shadow:0 6px 22px rgba(0,0,0,.18); color:var(--ink)}
+#tt .tt-t{font-weight:700; margin-bottom:3px}
+#tt .row{display:flex; justify-content:space-between; gap:14px}
+#tt .row span:last-child{font-variant-numeric:tabular-nums}
+
+/* login */
+#login{min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:20px}
+.login-card{background:var(--surface); border:1px solid var(--ring); border-radius:16px;
+  padding:34px 32px; width:100%; max-width:360px}
+.login-card h1{margin:0 0 4px; font-size:21px}
+.login-card p{margin:0 0 22px; color:var(--muted); font-size:13.5px}
+.fld{margin-bottom:14px}
+.fld label{display:block; font-size:13px; color:var(--ink2); margin-bottom:5px}
+.fld input{width:100%; border:1px solid var(--grid); background:var(--page); color:var(--ink);
+  border-radius:9px; padding:10px 12px; font:inherit; font-size:15px}
+.fld input:focus{outline:2px solid var(--c1); outline-offset:0; border-color:var(--c1)}
+.pbtn{width:100%; border:0; background:var(--c1); color:#fff; border-radius:9px;
+  padding:11px; font-size:15px; font-weight:700; cursor:pointer; margin-top:6px}
+.pbtn:active{transform:translateY(1px)}
+.err{color:var(--crit); font-size:13px; min-height:20px; margin-top:10px}
+
+/* dialog */
+dialog{border:1px solid var(--ring); border-radius:14px; background:var(--surface); color:var(--ink);
+  padding:24px 26px; width:min(92vw,340px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin:0 0 16px}
+.dlg-btns{display:flex; gap:10px; margin-top:14px}
+.dlg-btns .pbtn{margin:0}
+.dlg-btns .ubtn{flex:0 0 auto; border:1px solid var(--grid); background:transparent;
+  border-radius:9px; padding:10px 16px; cursor:pointer}
+
+footer{border-top:1px solid var(--grid); padding:18px 0 30px; color:var(--muted); font-size:12.5px}
+footer .wrap{display:grid; gap:4px}
+
+.note{font-size:12.5px; color:var(--muted); margin-top:10px}
+.hide{display:none !important}
+
+@media (max-width:760px){
+  .g2,.g3{grid-template-columns:1fr}
+  .brand{font-size:16px}
+  .kpi .v{font-size:22px}
+  .kpi.hero .v{font-size:26px}
+  .top-in{flex-wrap:wrap; gap:8px}
+}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <form class="login-card" id="loginForm">
+    <h1>彰化發送運行看板</h1>
+    <p>彰化與秀水發送運行表分析，請以工號登入</p>
+    <div class="fld"><label for="liEmp">工號</label>
+      <input id="liEmp" inputmode="numeric" autocomplete="username" required></div>
+    <div class="fld"><label for="liPw">密碼</label>
+      <input id="liPw" type="password" autocomplete="current-password" required></div>
+    <button class="pbtn" id="liBtn">登入</button>
+    <div class="err" id="liErr"></div>
+  </form>
+</div>
+
+<div id="app" class="hide">
+<header class="top"><div class="wrap top-in">
+  <div class="brand">彰化發送運行看板<small>彰化 4106 ・ 秀水 4150 ・ 拆封櫃明細</small></div>
+  <div class="top-sp"></div>
+  <span id="uname"></span>
+  <button class="ubtn" id="themeBtn" title="切換主題">主題</button>
+  <button class="ubtn" id="pwBtn">改密碼</button>
+  <button class="ubtn" id="outBtn">登出</button>
+</div></header>
+
+<nav class="tabs"><div class="wrap tabs-in" id="tabbar">
+  <button class="tab on" data-p="ov">總覽</button>
+  <button class="tab" data-p="ot">加班分析</button>
+  <button class="tab" data-p="dl">準點延誤</button>
+  <button class="tab" data-p="ld">積載運能</button>
+  <button class="tab" data-p="sl">封櫃節奏</button>
+  <button class="tab" data-p="dt">每日明細</button>
+</div></nav>
+
+<div class="wrap">
+  <div class="filters">
+    <select id="selMonth"></select>
+    <div class="chips" id="stChips">
+      <button class="chip on" data-st="">全部</button>
+      <button class="chip" data-st="4106">彰化</button>
+      <button class="chip" data-st="4150">秀水</button>
+    </div>
+    <span id="loadState"></span>
+  </div>
+</div>
+
+<main class="wrap">
+  <section class="panel on" id="p-ov"></section>
+  <section class="panel" id="p-ot"></section>
+  <section class="panel" id="p-dl"></section>
+  <section class="panel" id="p-ld"></section>
+  <section class="panel" id="p-sl"></section>
+  <section class="panel" id="p-dt"></section>
+</main>
+
+<footer><div class="wrap">
+  <span>資料來源：HCT 報表平台【運務】拆封櫃明細查詢（起站彰化、秀水），跟承辦說「更新運行表」即抓最新一天。</span>
+  <span>準點定義：實際離站延誤 5 分鐘以內。班別時間窗：發轉 15:00 至隔日 01:00、到轉 01:00 至 09:00、秀水籠車 22:30 至 06:30、低溫 20:00 至 07:00。</span>
+</div></footer>
+</div>
+
+<div id="tt"></div>
+
+<dialog id="pwDlg">
+  <h3>修改密碼</h3>
+  <form method="dialog" id="pwForm">
+    <div class="fld"><label>原密碼</label><input type="password" id="pwOld" required></div>
+    <div class="fld"><label>新密碼（至少 4 碼）</label><input type="password" id="pwNew" required minlength="4"></div>
+    <div class="err" id="pwErr"></div>
+    <div class="dlg-btns">
+      <button class="pbtn" value="ok" id="pwOk">確認修改</button>
+      <button class="ubtn" value="cancel" formnovalidate>取消</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const API = "https://hmqnlovyzlvvnkqmfwtt.supabase.co/functions/v1/runsheet";
+const CATS = ["正班","加班","增開","追加","過路"];
+const CATC = {正班:"var(--c1)",加班:"var(--c2)",增開:"var(--c3)",追加:"var(--c4)",過路:"var(--c5)"};
+const STN  = {"4106":"彰化","4150":"秀水"};
+const $ = s => document.querySelector(s);
+const el = (t,c,h)=>{const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;};
+const esc = s => String(s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const fmt1 = n => n==null?"–":(Math.round(n*10)/10).toLocaleString();
+const fmt0 = n => n==null?"–":Math.round(n).toLocaleString();
+const pct = n => n==null?"–":(Math.round(n*10)/10)+"%";
+
+/* ---------- theme ---------- */
+(function(){
+  try{const t=localStorage.getItem("rs_theme"); if(t)document.documentElement.dataset.theme=t;}catch(e){}
+})();
+$("#themeBtn")?.addEventListener("click",()=>{
+  const cur=document.documentElement.dataset.theme||
+    (matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+  const nxt=cur==="dark"?"light":"dark";
+  document.documentElement.dataset.theme=nxt;
+  try{localStorage.setItem("rs_theme",nxt);}catch(e){}
+  render();
+});
+
+/* ---------- auth ---------- */
+let AUTH=null;
+try{AUTH=JSON.parse(localStorage.getItem("rs_auth")||"null");}catch(e){}
+function setAuth(a){AUTH=a; try{a?localStorage.setItem("rs_auth",JSON.stringify(a)):localStorage.removeItem("rs_auth");}catch(e){}}
+async function api(body){
+  const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({error:"回應解析失敗"}));
+  if(!r.ok) throw Object.assign(new Error(j.error||("HTTP "+r.status)),{status:r.status});
+  return j;
+}
+$("#loginForm").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  $("#liErr").textContent=""; $("#liBtn").disabled=true;
+  try{
+    const j=await api({action:"login",emp:$("#liEmp").value.trim(),pass:$("#liPw").value});
+    setAuth({token:j.token,name:j.name,emp:$("#liEmp").value.trim()});
+    enter();
+  }catch(e){$("#liErr").textContent=e.message;}
+  $("#liBtn").disabled=false;
+});
+$("#outBtn").addEventListener("click",()=>{setAuth(null); location.reload();});
+$("#pwBtn").addEventListener("click",()=>{$("#pwErr").textContent="";$("#pwForm").reset();$("#pwDlg").showModal();});
+$("#pwOk").addEventListener("click",async ev=>{
+  ev.preventDefault();
+  if(!$("#pwForm").reportValidity())return;
+  $("#pwErr").textContent="";
+  try{
+    const j=await api({action:"chpass",emp:AUTH.emp,old_pass:$("#pwOld").value,new_pass:$("#pwNew").value});
+    setAuth({...AUTH,token:j.token});
+    $("#pwDlg").close();
+  }catch(e){$("#pwErr").textContent=e.message;}
+});
+
+/* ---------- data ---------- */
+let ROWS=[];               // current month rows (objects)
+const CACHE={};            // month -> rows
+let MONTH="", STATION="";
+function monthOptions(){
+  const out=[]; const now=new Date();
+  let y=2026,m=8;
+  while(y<now.getFullYear()||(y===now.getFullYear()&&m<=now.getMonth()+1)){
+    out.push(`${y}-${String(m).padStart(2,"0")}`);
+    m++; if(m>12){m=1;y++;}
+  }
+  return out.reverse();
+}
+async function loadMonth(mon){
+  $("#loadState").textContent="載入中…";
+  document.querySelectorAll(".panel").forEach(p=>p.style.opacity=.45);
+  try{
+    if(!CACHE[mon]){
+      const from=mon+"-01";
+      const [y,m]=mon.split("-").map(Number);
+      const to=`${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,"0")}-01`;
+      const j=await api({action:"data",token:AUTH.token,from,to:new Date(new Date(to)-864e5).toISOString().slice(0,10)});
+      CACHE[mon]=j.rows.map(r=>Object.fromEntries(j.cols.map((c,i)=>[c,r[i]])));
+    }
+    ROWS=CACHE[mon];
+    $("#loadState").textContent=ROWS.length?`${mon} 共 ${ROWS.length.toLocaleString()} 段`: "此月份尚無資料";
+  }catch(e){
+    if(e.status===401){setAuth(null); location.reload(); return;}
+    $("#loadState").textContent="載入失敗："+e.message;
+  }
+  document.querySelectorAll(".panel").forEach(p=>p.style.opacity=1);
+  render();
+}
+
+/* ---------- helpers ---------- */
+const hm2min = t=>{if(!t)return null;const m=/^(\d{1,2}):(\d{2})/.exec(t);return m?+m[1]*60+ +m[2]:null;};
+const opMin = t=>{const v=hm2min(t); return v==null?null:(v<720?v+1440:v);};   // 營運日 12:00 起算
+const opFmt = v=>{v=v%1440; return String(Math.floor(v/60)).padStart(2,"0")+":"+String(v%60).padStart(2,"0");};
+const isDep = r=>!r.canceled && r.leg_from && (r.leg_from.startsWith("4106")||r.leg_from.startsWith("4150"));
+const destName = s=>(s||"").replace(/^\d{4}/,"");
+const WD=["日","一","二","三","四","五","六"];
+
+function filtered(){ return STATION? ROWS.filter(r=>r.station===STATION) : ROWS; }
+/* 班次層級：key = day|trip_code|category（同班次跨彰秀只算一次） */
+function tripMap(rows){
+  const m=new Map();
+  for(const r of rows){
+    const k=r.day+"|"+r.trip_code+"|"+r.category;
+    let t=m.get(k);
+    if(!t){t={day:r.day,code:r.trip_code,name:r.trip_name,category:r.category,
+      legs:0,cx:0,loads:[],dep:null,dest:destName(r.rt_to),stations:new Set()}; m.set(k,t);}
+    t.legs++; if(r.canceled)t.cx++;
+    t.stations.add(r.station);
+    if(r.load_pct!=null&&!r.canceled)t.loads.push(r.load_pct);
+    if(!r.canceled&&isDep(r)){const d=opMin(r.act_dep??r.sched_dep); if(d!=null&&(t.dep==null||d<t.dep))t.dep=d;}
+  }
+  for(const t of m.values()) t.canceled = t.cx===t.legs;
+  return m;
+}
+/* 發車段（延誤/封櫃/積載分析用）：彰/秀出發、未取消、去重 */
+function depLegs(rows){
+  const seen=new Set(), out=[];
+  for(const r of rows){
+    if(!isDep(r))continue;
+    const k=r.day+"|"+r.trip_code+"|"+(r.container||"")+"|"+r.leg_from+"|"+r.leg_to;
+    if(seen.has(k))continue; seen.add(k); out.push(r);
+  }
+  return out;
+}
+const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
+
+/* ---------- tooltip ---------- */
+const tt=$("#tt");
+function ttShow(html,ev){ tt.innerHTML=html; tt.style.display="block"; ttMove(ev); }
+function ttMove(ev){
+  const w=tt.offsetWidth,h=tt.offsetHeight;
+  let x=ev.clientX+14,y=ev.clientY+12;
+  if(x+w>innerWidth-8)x=ev.clientX-w-12;
+  if(y+h>innerHeight-8)y=ev.clientY-h-10;
+  tt.style.left=x+"px"; tt.style.top=y+"px";
+}
+function ttHide(){tt.style.display="none";}
+function bindTT(svg){
+  svg.addEventListener("pointermove",ev=>{
+    const g=ev.target.closest("[data-tt]");
+    if(g)ttShow(g.dataset.tt,ev); else ttHide();
+  });
+  svg.addEventListener("pointerleave",ttHide);
+}
+
+/* ---------- svg builders ---------- */
+const NS="http://www.w3.org/2000/svg";
+function mkSvg(w,h){const s=document.createElementNS(NS,"svg");
+  s.setAttribute("viewBox",`0 0 ${w} ${h}`); s.setAttribute("class","chart");
+  s.style.aspectRatio=w+"/"+h; return s;}
+function sEl(p,t,at){const e=document.createElementNS(NS,t);
+  for(const k in at)e.setAttribute(k,at[k]); p.appendChild(e); return e;}
+
+/* 每日堆疊長條。series=[{key,label,color}]，預設為五大類別 */
+function stackChart(days, byDay, extra){
+  const series=extra?.series||CATS.map(c=>({key:c,label:c,color:CATC[c]}));
+  const unit=extra?.unit||" 班";
+  const W=Math.max(680, days.length*26+70), H=280, L=44, R=8, T=14, B=34;
+  const svg=mkSvg(W,H);
+  const max=Math.max(1,...days.map(d=>series.reduce((s,c)=>s+(byDay[d]?.[c.key]||0),0)));
+  const yS=v=>T+(H-T-B)*(1-v/max);
+  const step=Math.max(1,Math.ceil(max/5/10)*10);
+  for(let v=0;v<=max;v+=step){
+    sEl(svg,"line",{class:"g",x1:L,x2:W-R,y1:yS(v),y2:yS(v)});
+    sEl(svg,"text",{x:L-6,y:yS(v)+4,"text-anchor":"end"}).textContent=v;
+  }
+  sEl(svg,"line",{class:"ax",x1:L,x2:W-R,y1:yS(0),y2:yS(0)});
+  const bw=Math.min(18,(W-L-R)/days.length-6);
+  days.forEach((d,i)=>{
+    const x=L+(W-L-R)*(i+.5)/days.length-bw/2;
+    let y=yS(0);
+    const parts=series.filter(c=>byDay[d]?.[c.key]).map(c=>`<div class="row"><span><b style="background:${c.color};display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px"></b>${c.label}</span><span>${byDay[d][c.key]}</span></div>`).join("");
+    const cxn=extra?.cxByDay?.[d]||0;
+    const tot=series.reduce((s,c)=>s+(byDay[d]?.[c.key]||0),0);
+    const tth=`<div class="tt-t">${d.slice(5).replace("-","/")}（${WD[new Date(d+"T00:00").getDay()]}）共 ${tot}${unit}</div>${parts}`+
+      (cxn?`<div class="row"><span>取消</span><span>${cxn}</span></div>`:"");
+    const g=sEl(svg,"g",{"data-tt":tth});
+    sEl(g,"rect",{x:x-3,y:T,width:bw+6,height:H-T-B,fill:"transparent"});
+    for(const c of series){
+      const v=byDay[d]?.[c.key]||0; if(!v)continue;
+      const hh=(H-T-B)*v/max;
+      y-=hh;
+      sEl(g,"rect",{x,y:y+1,width:bw,height:Math.max(0,hh-2),rx:2,fill:c.color});
+    }
+    if(i%2===0||days.length<=16)
+      sEl(svg,"text",{x:x+bw/2,y:H-B+16,"text-anchor":"middle"}).textContent=+d.slice(8);
+  });
+  sEl(svg,"text",{x:W-R,y:H-B+16,"text-anchor":"end"}).textContent="日";
+  bindTT(svg);
+  return svg;
+}
+
+/* 直方圖（單色系列） */
+function histChart(labels, values, opts={}){
+  const W=Math.max(420,labels.length*64+60), H=210, L=40, R=8, T=16, B=42;
+  const svg=mkSvg(W,H);
+  const max=Math.max(1,...values);
+  const yS=v=>T+(H-T-B)*(1-v/max);
+  sEl(svg,"line",{class:"ax",x1:L,x2:W-R,y1:yS(0),y2:yS(0)});
+  const bw=Math.min(44,(W-L-R)/labels.length-14);
+  labels.forEach((lb,i)=>{
+    const x=L+(W-L-R)*(i+.5)/labels.length-bw/2;
+    const hh=(H-T-B)*values[i]/max;
+    sEl(svg,"rect",{x,y:yS(values[i]),width:bw,height:hh,rx:3,fill:opts.color||"var(--c1)"});
+    sEl(svg,"text",{class:"vlab",x:x+bw/2,y:yS(values[i])-5,"text-anchor":"middle"}).textContent=values[i];
+    const t=sEl(svg,"text",{x:x+bw/2,y:H-B+15,"text-anchor":"middle"});
+    t.textContent=lb;
+    if(opts.sub&&opts.sub[i]){
+      const t2=sEl(svg,"text",{x:x+bw/2,y:H-B+29,"text-anchor":"middle"});
+      t2.textContent=opts.sub[i];
+    }
+  });
+  return svg;
+}
+
+/* 時段分佈（30 分槽、堆疊、班別泳道） */
+function todChart(rows){
+  const SLOT=30, S0=720, S1=2160, N=(S1-S0)/SLOT;
+  const data=Array.from({length:N},()=>({}));
+  for(const r of rows){
+    const v=opMin(r.act_dep??r.sched_dep); if(v==null)continue;
+    const i=Math.min(N-1,Math.max(0,Math.floor((v-S0)/SLOT)));
+    data[i][r.category]=(data[i][r.category]||0)+1;
+  }
+  const W=980,H=300,L=40,R=10,T=86,B=30;
+  const svg=mkSvg(W,H);
+  const lanes=[["發轉",900,1500],["到轉",1500,1980],["秀水籠",1350,1830],["低溫",1200,1860]];
+  const xS=v=>L+(W-L-R)*(v-S0)/(S1-S0);
+  lanes.forEach((ln,i)=>{
+    const y=12+i*17;
+    sEl(svg,"line",{x1:xS(ln[1]),x2:xS(ln[2]),y1:y,y2:y,stroke:"var(--axis)","stroke-width":5,"stroke-linecap":"round"});
+    sEl(svg,"text",{x:xS(ln[1])-6,y:y+4,"text-anchor":"end"}).textContent=ln[0];
+  });
+  const max=Math.max(1,...data.map(d=>CATS.reduce((s,c)=>s+(d[c]||0),0)));
+  const yS=v=>T+(H-T-B)*(1-v/max);
+  sEl(svg,"line",{class:"ax",x1:L,x2:W-R,y1:yS(0),y2:yS(0)});
+  for(let hh=S0;hh<=S1;hh+=180){
+    sEl(svg,"line",{class:"g",x1:xS(hh),x2:xS(hh),y1:T,y2:H-B});
+    sEl(svg,"text",{x:xS(hh),y:H-B+18,"text-anchor":"middle"}).textContent=opFmt(hh);
+  }
+  const bw=(W-L-R)/N-2;
+  data.forEach((d,i)=>{
+    const tot=CATS.reduce((s,c)=>s+(d[c]||0),0); if(!tot)return;
+    const x=xS(S0+i*SLOT)+1;
+    let y=yS(0);
+    const parts=CATS.filter(c=>d[c]).map(c=>`<div class="row"><span><b style="background:${CATC[c]};display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px"></b>${c}</span><span>${d[c]}</span></div>`).join("");
+    const g=sEl(svg,"g",{"data-tt":`<div class="tt-t">${opFmt(S0+i*SLOT)} 至 ${opFmt(S0+(i+1)*SLOT)}：${tot} 段</div>${parts}`});
+    sEl(g,"rect",{x:x-1,y:T,width:bw+2,height:H-T-B,fill:"transparent"});
+    for(const c of CATS){
+      const v=d[c]||0; if(!v)continue;
+      const hh2=(H-T-B)*v/max; y-=hh2;
+      sEl(g,"rect",{x,y:y+1,width:bw,height:Math.max(.5,hh2-2),rx:1.5,fill:CATC[c]});
+    }
+  });
+  bindTT(svg);
+  return svg;
+}
+
+function legendHtml(cats){
+  return `<div class="legend">`+cats.map(c=>`<span><b style="background:${CATC[c]}"></b>${c}</span>`).join("")+`</div>`;
+}
+function barList(items, color, unit){
+  const max=Math.max(1,...items.map(i=>i.v));
+  const d=el("div","blist");
+  for(const it of items){
+    d.append(el("div","brow",
+      `<span class="n" title="${esc(it.n)}">${esc(it.n)}</span>`+
+      `<span><span class="bar" style="width:${Math.max(2,it.v/max*100)}%;background:${color||"var(--c1)"}"></span></span>`+
+      `<span class="v">${esc(fmt1(it.v))}<small>${unit||""}</small></span>`));
+  }
+  return d;
+}
+function card(title,sub,body,tableHtml){
+  const c=el("section","card");
+  const head=el("div","card-head",`<h3>${title}</h3><span class="sp"></span>`);
+  c.append(head);
+  if(sub)c.append(el("p","sub",sub));
+  const bodyWrap=el("div","scroll-x");
+  if(body)bodyWrap.append(body);
+  c.append(bodyWrap);
+  if(tableHtml){
+    const tb=el("div","scroll-x hide"); tb.innerHTML=tableHtml;
+    const btn=el("button","tbtn","表格");
+    btn.addEventListener("click",()=>{const on=tb.classList.toggle("hide");
+      bodyWrap.classList.toggle("hide",!on); btn.classList.toggle("on",on);});
+    head.append(btn); c.append(tb);
+  }
+  return c;
+}
+const kpi=(k,v,d,hero)=>el("div","kpi"+(hero?" hero":""),
+  `<div class="k">${k}</div><div class="v">${v}</div>${d?`<div class="d">${d}</div>`:""}`);
+
+/* ---------- panels ---------- */
+function pOverview(root){
+  const rows=filtered(), trips=[...tripMap(rows).values()];
+  const act=trips.filter(t=>!t.canceled), cx=trips.filter(t=>t.canceled);
+  const dep=depLegs(rows);
+  const nBy=c=>act.filter(t=>t.category===c).length;
+  const days=[...new Set(rows.map(r=>r.day))].sort();
+  const dl=dep.filter(r=>r.dep_delay_min!=null&&r.category!=="過路");
+  const onTime=dl.length?dl.filter(r=>r.dep_delay_min<=5).length/dl.length*100:null;
+  const loads=dep.filter(r=>r.load_pct!=null).map(r=>r.load_pct);
+
+  const k=el("div","kpis");
+  k.append(
+    kpi("期間班次",`${act.length.toLocaleString()} <small>班／${days.length} 天</small>`,
+        `日均 ${fmt1(act.length/Math.max(1,days.length))} 班`,true),
+    kpi("正班次",nBy("正班").toLocaleString(),`日均 ${fmt1(nBy("正班")/Math.max(1,days.length))}`),
+    kpi("加班車",nBy("加班").toLocaleString(),`日均 ${fmt1(nBy("加班")/Math.max(1,days.length))}`),
+    kpi("增開",nBy("增開").toLocaleString(),`日均 ${fmt1(nBy("增開")/Math.max(1,days.length))}`),
+    kpi("追加＋過路",(nBy("追加")+nBy("過路")).toLocaleString(),`追加 ${nBy("追加")}・過路 ${nBy("過路")}`),
+    kpi("取消班次",cx.length.toLocaleString(),null),
+    kpi("發車準點率",pct(onTime),"延誤 5 分內"),
+    kpi("平均積載率",pct(avg(loads)),`${loads.length.toLocaleString()} 段`)
+  );
+  root.append(k);
+
+  const byDay={}, cxByDay={};
+  for(const t of act){(byDay[t.day]??={})[t.category]=(byDay[t.day][t.category]||0)+1;}
+  for(const t of cx){cxByDay[t.day]=(cxByDay[t.day]||0)+1;}
+  const c1=card("每日班次量","依類別堆疊，游標停留看單日明細",stackChart(days,byDay,{cxByDay}),
+    `<table class="dt"><tr><th>日期</th>${CATS.map(c=>`<th>${c}</th>`).join("")}<th>取消</th><th>合計</th></tr>`+
+    days.map(d=>`<tr><td>${d.slice(5)}</td>${CATS.map(c=>`<td class="num">${byDay[d]?.[c]||0}</td>`).join("")}`+
+      `<td class="num">${cxByDay[d]||0}</td><td class="num">${CATS.reduce((s,c)=>s+(byDay[d]?.[c]||0),0)}</td></tr>`).join("")+"</table>");
+  c1.querySelector(".card-head").insertAdjacentHTML("beforeend","");
+  c1.insertBefore(el("div","",legendHtml(CATS)),c1.children[2]);
+  root.append(c1);
+
+  const g=el("div","grid g2");
+  const st={};
+  for(const t of act)for(const s of t.stations)(st[s]??={})[t.category]=(st[s][t.category]||0)+1;
+  const stBody=el("div");
+  for(const s of ["4106","4150"]){
+    if(STATION&&STATION!==s)continue;
+    const tot=CATS.reduce((a,c)=>a+(st[s]?.[c]||0),0);
+    stBody.append(el("div","",`<div style="font-size:13px;color:var(--ink2);margin:8px 0 4px">${STN[s]}（${tot} 班）</div>`));
+    stBody.append(barList(CATS.map(c=>({n:c,v:st[s]?.[c]||0})).filter(i=>i.v),"var(--c1)"," 班"));
+  }
+  g.append(card("兩站班次組成","同一班次跨兩站者兩邊都計",stBody));
+
+  const wd=Array.from({length:7},()=>({n:0,d:0}));
+  const dayN={}; for(const d of days)dayN[d]=new Date(d+"T00:00").getDay();
+  const wdDays=Array.from({length:7},()=>0);
+  for(const d of days)wdDays[dayN[d]]++;
+  for(const t of act)if(t.category!=="正班")wd[dayN[t.day]].n++;
+  const order=[1,2,3,4,5,6,0];
+  g.append(card("非正班量（星期別）","加班＋增開＋追加＋過路的日均量",
+    histChart(order.map(i=>"週"+WD[i]),
+      order.map(i=>wdDays[i]?Math.round(wd[i].n/wdDays[i]*10)/10:0),{color:"var(--c2)"})));
+  root.append(g);
+}
+
+function pOvertime(root){
+  const rows=filtered(), trips=[...tripMap(rows).values()].filter(t=>!t.canceled);
+  const ot=trips.filter(t=>t.category==="加班"||t.category==="增開");
+  const days=[...new Set(rows.map(r=>r.day))].sort();
+
+  const k=el("div","kpis");
+  const otD={}; for(const t of ot)otD[t.day]=(otD[t.day]||0)+1;
+  const peak=days.reduce((b,d)=>(otD[d]||0)>(otD[b]||0)?d:b,days[0]);
+  k.append(
+    kpi("加班＋增開",ot.length.toLocaleString()+" <small>班</small>",`日均 ${fmt1(ot.length/Math.max(1,days.length))}`,true),
+    kpi("最高單日",fmt0(otD[peak]),peak?peak.slice(5).replace("-","/")+"（週"+WD[new Date(peak+"T00:00").getDay()]+"）":""),
+    kpi("加班平均積載",pct(avg(ot.filter(t=>t.category==="加班").flatMap(t=>t.loads))),"取有積載資料者"),
+    kpi("增開平均積載",pct(avg(ot.filter(t=>t.category==="增開").flatMap(t=>t.loads))),null)
+  );
+  root.append(k);
+
+  const g=el("div","grid g2");
+  const dest={};
+  for(const t of ot){const d=t.dest||"？"; dest[d]=(dest[d]||0)+1;}
+  const top=Object.entries(dest).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  g.append(card("加班熱點路線","加班＋增開的迄站分佈（前 12）",
+    barList(top.map(([n,v])=>({n,v})),"var(--c2)"," 班")));
+
+  const freq={};
+  for(const t of ot){
+    const f=freq[t.code]??={n:t.name,days:new Set(),loads:[],deps:[]};
+    f.days.add(t.day); f.loads.push(...t.loads); if(t.dep!=null)f.deps.push(t.dep);
+  }
+  const fr=Object.values(freq).map(f=>({...f,d:f.days.size})).sort((a,b)=>b.d-a.d).slice(0,12);
+  g.append(card("常態化加班班次","出現天數最多者。天天都開的「加班」其實是固定需求，可評估轉正班",null,null));
+  const tbl=`<table class="dt"><tr><th>班次</th><th>出現</th><th>平均積載</th><th>平均發車</th></tr>`+
+    fr.map(f=>`<tr><td>${esc(f.n)}</td><td class="num">${f.d} 天</td>`+
+      `<td class="num">${pct(avg(f.loads))}</td><td class="num">${f.deps.length?opFmt(Math.round(avg(f.deps))):"–"}</td></tr>`).join("")+`</table>`;
+  g.lastChild.querySelector(".scroll-x").innerHTML=tbl;
+  root.append(g);
+
+  const byDay={};
+  for(const t of ot)(byDay[t.day]??={})[t.category]=(byDay[t.day][t.category]||0)+1;
+  const c=card("每日加班量","僅加班與增開",stackChart(days,byDay,{}));
+  c.insertBefore(el("div","",legendHtml(["加班","增開"])),c.children[2]);
+  root.append(c);
+}
+
+function pDelay(root){
+  const rows=filtered(), dep=depLegs(rows);
+  /* 過路(＋秀)車的「規定離站」多為原始起點的表定時間，與秀水實際離站相減會失真，延誤統計一律排除 */
+  const dl=dep.filter(r=>r.dep_delay_min!=null&&r.category!=="過路");
+  const k=el("div","kpis");
+  const onT=dl.length?dl.filter(r=>r.dep_delay_min<=5).length/dl.length*100:null;
+  const late30=dl.filter(r=>r.dep_delay_min>30).length;
+  k.append(
+    kpi("發車準點率",pct(onT),"延誤 5 分內／有規定時間者",true),
+    kpi("平均延誤",fmt1(avg(dl.map(r=>r.dep_delay_min)))+" <small>分</small>","早發以負值計"),
+    kpi("延誤超過 30 分",late30.toLocaleString()+" <small>段</small>",pct(dl.length?late30/dl.length*100:null)),
+    kpi("有效樣本",dl.length.toLocaleString()+" <small>段</small>","彰秀發車、未取消，不含過路車")
+  );
+  root.append(k);
+
+  const buckets=[["早發 10 分以上",r=>r<=-10],["-10 至 0",r=>r>-10&&r<=0],["1 至 5",r=>r>0&&r<=5],
+    ["6 至 15",r=>r>5&&r<=15],["16 至 30",r=>r>15&&r<=30],["31 至 60",r=>r>30&&r<=60],["超過 60",r=>r>60]];
+  const bv=buckets.map(b=>dl.filter(r=>b[1](r.dep_delay_min)).length);
+  const g=el("div","grid g2");
+  g.append(card("延誤分佈（分鐘）","實際離站－規定離站",
+    histChart(buckets.map(b=>b[0]),bv)));
+
+  const byTrip={};
+  for(const r of dl){
+    const t=byTrip[r.trip_code]??={n:r.trip_name,v:[],cat:r.category};
+    t.v.push(r.dep_delay_min);
+  }
+  const worst=Object.values(byTrip).filter(t=>t.v.length>=3)
+    .map(t=>({...t,m:avg(t.v)})).sort((a,b)=>b.m-a.m).slice(0,12);
+  const c2=card("延誤常客","出現 3 段以上、平均延誤最高的班次",null);
+  c2.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>班次</th><th>類別</th><th>樣本</th><th>平均延誤</th><th>最大</th></tr>`+
+    worst.map(t=>`<tr><td>${esc(t.n)}</td><td><span class="cat-pill" style="background:${CATC[t.cat]}">${t.cat}</span></td>`+
+      `<td class="num">${t.v.length}</td><td class="num ${t.m>30?"late-crit":t.m>10?"late-warn":""}">${fmt1(t.m)} 分</td>`+
+      `<td class="num">${fmt0(Math.max(...t.v))} 分</td></tr>`).join("")+`</table>`;
+  g.append(c2);
+  root.append(g);
+
+  const c3=card("發車時段分佈","30 分鐘一格、依類別堆疊；上方橫桿是四個班別時間窗",todChart(dep));
+  c3.insertBefore(el("div","",legendHtml(CATS)),c3.children[2]);
+  root.append(c3);
+}
+
+function pLoad(root){
+  const rows=filtered(), dep=depLegs(rows);
+  const withL=dep.filter(r=>r.load_pct!=null);
+  const k=el("div","kpis");
+  const byCat=c=>withL.filter(r=>r.category===c).map(r=>r.load_pct);
+  k.append(
+    kpi("平均積載率",pct(avg(withL.map(r=>r.load_pct))),`${withL.length.toLocaleString()} 段`,true),
+    kpi("正班平均",pct(avg(byCat("正班"))),null),
+    kpi("加班平均",pct(avg(byCat("加班"))),null),
+    kpi("滿載段數",withL.filter(r=>r.load_pct>=100).length.toLocaleString(),"積載率 100%")
+  );
+  root.append(k);
+
+  const g=el("div","grid g2");
+  const bks=[["50 以下",v=>v<50],["50 至 69",v=>v>=50&&v<70],["70 至 84",v=>v>=70&&v<85],
+    ["85 至 99",v=>v>=85&&v<100],["100",v=>v>=100]];
+  g.append(card("積載率分佈","所有發車段",
+    histChart(bks.map(b=>b[0]),bks.map(b=>withL.filter(r=>b[1](r.load_pct)).length))));
+
+  const lowOT=withL.filter(r=>(r.category==="加班"||r.category==="增開")&&r.load_pct<70)
+    .sort((a,b)=>a.load_pct-b.load_pct).slice(0,14);
+  const c2=card("低載加班清單","積載率不到 70% 的加班／增開，檢討是否有必要開",null);
+  c2.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>日期</th><th>班次</th><th>積載</th><th>籠車</th><th>發車</th></tr>`+
+    (lowOT.length?lowOT.map(r=>`<tr><td>${r.day.slice(5)}</td><td>${esc(r.trip_name)}</td>`+
+      `<td class="num late-warn">${r.load_pct}%</td><td class="num">${r.cage_send||0}</td>`+
+      `<td class="num">${esc(r.act_dep||r.sched_dep||"–")}</td></tr>`).join("")
+      :`<tr><td colspan="5" style="color:var(--muted)">此區間沒有低載加班，狀況良好</td></tr>`)+`</table>`;
+  g.append(c2);
+  root.append(g);
+
+  const full={};
+  for(const r of withL.filter(r=>r.category==="正班")){
+    const t=full[r.trip_code]??={n:r.trip_name,v:[],f:0};
+    t.v.push(r.load_pct); if(r.load_pct>=100)t.f++;
+  }
+  const hot=Object.values(full).filter(t=>t.v.length>=5&&avg(t.v)>=95)
+    .sort((a,b)=>b.f-a.f||avg(b.v)-avg(a.v)).slice(0,12);
+  const c3=card("常滿載正班","平均積載 95% 以上的正班（5 段以上樣本），這些線最容易生出加班車",null);
+  c3.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>班次</th><th>樣本</th><th>平均積載</th><th>滿載次數</th></tr>`+
+    hot.map(t=>`<tr><td>${esc(t.n)}</td><td class="num">${t.v.length}</td>`+
+      `<td class="num">${pct(avg(t.v))}</td><td class="num">${t.f}</td></tr>`).join("")+`</table>`;
+  root.append(c3);
+
+  const days=[...new Set(rows.map(r=>r.day))].sort();
+  const cage={}, cold={};
+  for(const r of dep){cage[r.day]=(cage[r.day]||0)+(r.cage_send||0); cold[r.day]=(cold[r.day]||0)+(r.cold_send||0);}
+  const cageSeries=[{key:"cage",label:"一般籠車",color:"var(--c1)"},{key:"cold",label:"低溫籠車",color:"var(--c3)"}];
+  const c4=card("每日籠車量","發送籠車與低溫籠車（輛）",
+    stackChart(days,Object.fromEntries(days.map(d=>[d,{cage:cage[d]||0,cold:cold[d]||0}])),
+      {series:cageSeries,unit:" 輛"}));
+  c4.insertBefore(el("div","",
+    `<div class="legend"><span><b style="background:var(--c1)"></b>一般籠車</span><span><b style="background:var(--c3)"></b>低溫籠車</span></div>`),c4.children[2]);
+  root.append(c4);
+}
+
+function pSeal(root){
+  const rows=filtered(), dep=depLegs(rows);
+  const sd=dep.filter(r=>r.seal_to_dep_min!=null&&r.seal_to_dep_min>-120);
+  const k=el("div","kpis");
+  k.append(
+    kpi("封櫃到發車中位數",(()=>{const a=sd.map(r=>r.seal_to_dep_min).sort((x,y)=>x-y);
+      return a.length?fmt0(a[Math.floor(a.length/2)])+" <small>分</small>":"–";})(),"封櫃完成到實際離站",true),
+    kpi("30 分內發車",pct(sd.length?sd.filter(r=>r.seal_to_dep_min<=30&&r.seal_to_dep_min>=0).length/sd.length*100:null),"封完很快就走"),
+    kpi("超過 2 小時",sd.filter(r=>r.seal_to_dep_min>120).length.toLocaleString()+" <small>段</small>","封太早或車太晚"),
+    kpi("有效樣本",sd.length.toLocaleString()+" <small>段</small>",null)
+  );
+  root.append(k);
+
+  const g=el("div","grid g2");
+  const bks=[["0 至 15",v=>v>=0&&v<=15],["16 至 30",v=>v>15&&v<=30],["31 至 60",v=>v>30&&v<=60],
+    ["61 至 120",v=>v>60&&v<=120],["超過 120",v=>v>120],["負值",v=>v<0]];
+  g.append(card("封櫃至發車間隔（分）","間隔太長代表櫃子封好在等車，或月台被佔",
+    histChart(bks.map(b=>b[0]),bks.map(b=>sd.filter(r=>b[1](r.seal_to_dep_min)).length))));
+
+  const staff={};
+  for(const r of dep){
+    if(!r.seal_staff)continue;
+    const s=staff[r.seal_staff]??={v:0,days:new Set()};
+    s.v++; s.days.add(r.day);
+  }
+  const stTop=Object.entries(staff).map(([n,s])=>({n,v:s.v,d:s.days.size}))
+    .sort((a,b)=>b.v-a.v).slice(0,12);
+  g.append(card("封櫃人員工作量","期間封櫃筆數（前 12）",
+    barList(stTop.map(s=>({n:`${s.n}（${s.d} 天）`,v:s.v})),"var(--c3)"," 筆")));
+  root.append(g);
+
+  const plat={};
+  for(const r of dep){if(r.platform_load)plat[r.platform_load]=(plat[r.platform_load]||0)+1;}
+  const pTop=Object.entries(plat).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  root.append(card("上貨月台使用量","最忙的月台（前 15），排班時可分散尖峰",
+    barList(pTop.map(([n,v])=>({n:"月台 "+n,v})),"var(--c1)"," 次")));
+}
+
+function pDetail(root){
+  const rows=filtered();
+  const days=[...new Set(rows.map(r=>r.day))].sort().reverse();
+  const bar=el("div","filters");
+  const sel=el("select"); sel.id="dtDay";
+  for(const d of days)sel.append(new Option(d.slice(5).replace("-","/")+"（週"+WD[new Date(d+"T00:00").getDay()]+"）",d));
+  const q=el("input"); q.placeholder="搜班次、櫃號、司機、月台…";
+  q.style.cssText="border:1px solid var(--grid);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:14px;flex:1;min-width:160px";
+  bar.append(sel,q);
+  root.append(bar);
+  const holder=el("div","card"); root.append(holder);
+
+  const draw=()=>{
+    const d=sel.value, kw=q.value.trim();
+    let rs=rows.filter(r=>r.day===d);
+    if(kw)rs=rs.filter(r=>[r.trip_name,r.container,r.driver_from,r.driver_to,r.platform_load,r.leg_to,r.seal_staff]
+      .some(x=>x&&String(x).includes(kw)));
+    rs.sort((a,b)=>(opMin(a.act_dep??a.sched_dep)??9e9)-(opMin(b.act_dep??b.sched_dep)??9e9));
+    const dcls=v=>v==null?"":v<=5?"late-good":v<=30?"late-warn":"late-crit";
+    holder.innerHTML=`<div class="scroll-x"><table class="dt">
+      <tr><th>類別</th><th>班次</th><th>櫃號</th><th>路順</th><th>規定離</th><th>實際離</th><th>延誤</th><th>積載</th><th>籠</th><th>封櫃</th><th>司機</th></tr>`+
+      rs.map(r=>`<tr class="${r.canceled?"cx":""}">
+        <td><span class="cat-pill" style="background:${CATC[r.category]||"var(--muted)"}">${r.category}</span></td>
+        <td>${esc(r.trip_name)}</td><td>${r.canceled?"取消":esc(r.container||"")}</td>
+        <td>${esc(destName(r.leg_from))}→${esc(destName(r.leg_to))}</td>
+        <td class="num">${esc(r.sched_dep||"–")}</td><td class="num">${esc(r.act_dep||"–")}</td>
+        <td class="num ${dcls(r.dep_delay_min)}">${r.dep_delay_min==null?"–":(r.dep_delay_min>0?"+":"")+r.dep_delay_min}</td>
+        <td class="num">${r.load_pct==null?"–":r.load_pct+"%"}</td>
+        <td class="num">${(r.cage_send||0)+(r.cold_send||0)||"–"}</td>
+        <td class="num">${esc(r.seal_time||"–")}${r.seal_staff?"<br><small style='color:var(--muted)'>"+esc(r.seal_staff)+"</small>":""}</td>
+        <td>${esc((r.driver_from||"").replace(/^\d+/,""))}</td></tr>`).join("")+
+      `</table></div><p class="note">${rs.length} 段（含取消）。延誤欄：綠 5 分內、橘 30 分內、紅超過 30 分；負值為早發。</p>`;
+  };
+  sel.addEventListener("change",draw);
+  q.addEventListener("input",()=>{clearTimeout(q._t); q._t=setTimeout(draw,250);});
+  if(days.length)draw(); else holder.innerHTML=`<p class="note">此月份尚無資料</p>`;
+}
+
+/* ---------- render ---------- */
+const PANELS={ov:pOverview,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
+let CUR="ov";
+function render(){
+  const root=$("#p-"+CUR);
+  document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("on",p.id==="p-"+CUR));
+  root.innerHTML="";
+  if(!ROWS.length){root.append(el("p","note","此月份尚無資料，請選其他月份。")); return;}
+  PANELS[CUR](root);
+}
+$("#tabbar").addEventListener("click",ev=>{
+  const b=ev.target.closest(".tab"); if(!b)return;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t===b));
+  CUR=b.dataset.p; render();
+});
+$("#stChips").addEventListener("click",ev=>{
+  const b=ev.target.closest(".chip"); if(!b)return;
+  document.querySelectorAll("#stChips .chip").forEach(c=>c.classList.toggle("on",c===b));
+  STATION=b.dataset.st; render();
+});
+$("#selMonth").addEventListener("change",ev=>{MONTH=ev.target.value; loadMonth(MONTH);});
+
+function enter(){
+  $("#login").classList.add("hide");
+  $("#app").classList.remove("hide");
+  $("#uname").textContent=AUTH.name||AUTH.emp;
+  const sel=$("#selMonth");
+  sel.innerHTML="";
+  for(const m of monthOptions())sel.append(new Option(m.replace("-","年")+"月",m));
+  MONTH=sel.value;
+  loadMonth(MONTH);
+}
+if(AUTH?.token)enter();
+</script>
+</body>
+</html>
