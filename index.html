@@ -234,6 +234,7 @@ footer .wrap{display:grid; gap:4px}
 <nav class="tabs"><div class="wrap tabs-in" id="tabbar">
   <button class="tab on" data-p="ov">總覽</button>
   <button class="tab" data-p="rs">班次名冊</button>
+  <button class="tab" data-p="tm">放車時刻</button>
   <button class="tab" data-p="ot">加班分析</button>
   <button class="tab" data-p="dl">準點延誤</button>
   <button class="tab" data-p="ld">積載運能</button>
@@ -256,6 +257,7 @@ footer .wrap{display:grid; gap:4px}
 <main class="wrap">
   <section class="panel on" id="p-ov"></section>
   <section class="panel" id="p-rs"></section>
+  <section class="panel" id="p-tm"></section>
   <section class="panel" id="p-ot"></section>
   <section class="panel" id="p-dl"></section>
   <section class="panel" id="p-ld"></section>
@@ -762,6 +764,167 @@ function pRoster(root){
   draw();
 }
 
+function pTiming(root){
+  const rows=filtered();
+  const wdOf=d=>new Date(d+"T00:00").getDay();
+  let view="trip", wdSel=0;
+
+  const pctl=(a,p)=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);
+    const i=(s.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i);
+    return s[lo]+(s[hi]-s[lo])*(i-lo);};
+  const mode=a=>{const m={};let b=null;
+    for(const x of a){if(!x)continue;m[x]=(m[x]||0)+1;if(b==null||m[x]>m[b])b=x;}return b;};
+
+  const bar=el("div","filters");
+  const vWrap=el("div","chips");
+  for(const [lbl,v] of [["班次時刻表","trip"],["月台視角","plat"]]){
+    const b=el("button","chip"+(v==="trip"?" on":""),lbl);
+    b.addEventListener("click",()=>{view=v;
+      vWrap.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c===b)); draw();});
+    vWrap.append(b);
+  }
+  const wWrap=el("div","chips");
+  for(const [lbl,v] of [["全部",0],["週一",1],["週二",2],["週三",3],["週四",4],["週五",5],["週六",6]]){
+    const b=el("button","chip"+(v===0?" on":""),lbl);
+    b.addEventListener("click",()=>{wdSel=v;
+      wWrap.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c===b)); draw();});
+    wWrap.append(b);
+  }
+  const q=el("input"); q.placeholder="搜班次、迄站、月台…";
+  q.style.cssText="border:1px solid var(--grid);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:14px;flex:1;min-width:150px;max-width:280px";
+  bar.append(vWrap,wWrap,q);
+  root.append(bar);
+  const holder=el("div"); root.append(holder);
+
+  const dcls=v=>v==null?"":v<=5?"late-good":v<=30?"late-warn":"late-crit";
+  function boxSvg(d25,dm,d75){
+    if(dm==null)return "";
+    const MIN=-30,MAX=90,W=150,H=18;
+    const sx=v=>4+((Math.max(MIN,Math.min(MAX,v))-MIN)/(MAX-MIN))*(W-8);
+    const a=d25!=null?sx(d25):sx(dm), b=d75!=null?sx(d75):sx(dm);
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px;vertical-align:middle">`+
+      `<line x1="4" x2="${W-4}" y1="${H/2}" y2="${H/2}" stroke="var(--grid)"/>`+
+      `<line x1="${sx(0)}" x2="${sx(0)}" y1="2" y2="${H-2}" stroke="var(--axis)"/>`+
+      `<rect x="${Math.min(a,b)}" y="5" width="${Math.max(2,Math.abs(b-a))}" height="8" rx="2" fill="var(--c1)" opacity=".3"/>`+
+      `<line x1="${sx(dm)}" x2="${sx(dm)}" y1="4" y2="${H-4}" stroke="var(--c1)" stroke-width="2.5"/></svg>`;
+  }
+
+  function build(){
+    const seen=new Set(), legs=[];
+    for(const r of rows){
+      if(!fromZone(r)||r.canceled)continue;
+      if(wdSel&&wdOf(r.day)!==wdSel)continue;
+      if(!wdSel&&wdOf(r.day)===0)continue;
+      const k=r.day+"|"+r.trip_code+"|"+(r.container||"")+"|"+r.leg_from+"|"+r.leg_to;
+      if(seen.has(k))continue; seen.add(k); legs.push(r);
+    }
+    const T=new Map();
+    for(const r of legs){
+      const k=r.trip_code+"|"+r.category;
+      let t=T.get(k);
+      if(!t){t={code:r.trip_code,name:r.trip_name,cat:r.category,dest:destName(r.rt_to),
+        scheds:[],acts:[],delays:[],plats:[],seals:[],days:new Set()}; T.set(k,t);}
+      t.days.add(r.day);
+      if(r.sched_dep)t.scheds.push(r.sched_dep);
+      const av=opMin(r.act_dep); if(av!=null)t.acts.push(av);
+      if(r.dep_delay_min!=null&&r.category!=="過路")t.delays.push(r.dep_delay_min);
+      if(r.platform_load)t.plats.push(r.platform_load);
+      const sv=opMin(r.seal_time); if(sv!=null)t.seals.push(sv);
+    }
+    const all=[...T.values()].map(t=>{
+      const schedStr=mode(t.scheds);
+      return {...t,
+        schedStr, schedOp:opMin(schedStr),
+        actMed:pctl(t.acts,.5), a25:pctl(t.acts,.25), a75:pctl(t.acts,.75),
+        delMed:pctl(t.delays,.5), d25:pctl(t.delays,.25), d75:pctl(t.delays,.75),
+        plat:mode(t.plats), sealMed:pctl(t.seals,.5),
+        onT:t.delays.length?t.delays.filter(v=>v<=5).length/t.delays.length*100:null};
+    });
+    return all;
+  }
+
+  const timeCell=v=>v==null?"–":opFmt(Math.round(v));
+  const rangeCell=t=>t.a25!=null&&t.a75!=null?`${timeCell(t.a25)}–${timeCell(t.a75)}`:"–";
+
+  function tripRow(t,withCat){
+    const diff=t.delMed==null?"–":`<span class="${dcls(t.delMed)}">${t.delMed>0?"晚 ":t.delMed<0?"早 ":""}${Math.abs(Math.round(t.delMed))||"準"} 分</span>`;
+    return `<tr><td title="${esc(t.name)}">${esc(t.name)}</td>`+
+      (withCat?`<td><span class="cat-pill" style="background:${CATC[t.cat]}">${t.cat}</span></td>`:"")+
+      `<td>${esc(t.dest)}</td><td class="c">${esc(t.plat||"–")}</td>`+
+      `<td class="num">${esc(t.schedStr||"–")}</td>`+
+      `<td class="num"><b>${timeCell(t.actMed)}</b></td>`+
+      `<td class="num">${diff}</td>`+
+      `<td class="num">${rangeCell(t)}</td>`+
+      `<td>${boxSvg(t.d25,t.delMed,t.d75)}</td>`+
+      `<td class="num">${timeCell(t.sealMed)}</td>`+
+      `<td class="num">${t.acts.length}</td>`+
+      `<td class="num">${t.onT==null?"–":Math.round(t.onT)+"%"}</td></tr>`;
+  }
+  const HEAD=(withCat)=>`<tr><th>班次</th>${withCat?"<th>類別</th>":""}<th>迄站</th><th>月台</th><th>表定</th><th>平常實際</th><th>通常差</th><th>常態區間</th><th>延誤分佈 -30～+90分</th><th>封櫃中位</th><th>樣本</th><th>準點</th></tr>`;
+
+  function draw(){
+    const kw=q.value.trim();
+    let all=build();
+    if(kw)all=all.filter(t=>t.name.includes(kw)||t.dest.includes(kw)||(t.plat||"").includes(kw));
+    const sched=all.filter(t=>(t.cat==="正班"||t.cat==="增開")&&t.schedOp!=null)
+      .sort((a,b)=>a.schedOp-b.schedOp);
+    const ot=all.filter(t=>!((t.cat==="正班"||t.cat==="增開")&&t.schedOp!=null))
+      .sort((a,b)=>(a.actMed??9e9)-(b.actMed??9e9));
+    holder.innerHTML="";
+
+    if(view==="trip"){
+      const gs=[["發送","15:00 至 01:00"],["到著","01:00 至 09:00"],["日間","09:00 至 15:00"]];
+      const bySh={};
+      for(const t of sched)(bySh[shiftOf(t.schedOp)]??=[]).push(t);
+      let body="";
+      for(const [s,rng] of gs){
+        const list=bySh[s]||[]; if(!list.length)continue;
+        body+=`<tr class="grp"><td>${s}時段　${rng}（${list.length} 班）</td><td colspan="11"></td></tr>`;
+        body+=list.map(t=>tripRow(t,false)).join("");
+      }
+      const c1=card("放車時刻表（表定 vs 平常實際）",
+        `正班＋增開，依表定離站排序${wdSel?"，僅週"+"日一二三四五六"[wdSel]+"樣本":"（平日＋週六混合）"}。「平常實際」為中位數，常態區間為 P25 至 P75；分佈圖直線=中位、色塊=常態區間、豎線=表定`,null);
+      c1.querySelector(".scroll-x").innerHTML=
+        `<div class="mx-wrap"><table class="mx"><thead>${HEAD(false)}</thead><tbody>${body||`<tr><td colspan="12" style="color:var(--muted)">無符合班次</td></tr>`}</tbody></table></div>`;
+      holder.append(c1);
+    }else{
+      const byP={};
+      for(const t of [...sched,...ot])(byP[t.plat||"未記月台"]??=[]).push(t);
+      const pKeys=Object.keys(byP).sort((a,b)=>{
+        const na=parseInt(a), nb=parseInt(b);
+        if(!isNaN(na)&&!isNaN(nb))return na-nb;
+        if(!isNaN(na))return -1; if(!isNaN(nb))return 1;
+        return a.localeCompare(b);});
+      let body="";
+      for(const p of pKeys){
+        const list=byP[p].sort((a,b)=>((a.schedOp??a.actMed??9e9)-(b.schedOp??b.actMed??9e9)));
+        body+=`<tr class="grp"><td>月台 ${esc(p)}（${list.length} 班）</td><td colspan="12"></td></tr>`;
+        body+=list.map(t=>tripRow(t,true)).join("");
+      }
+      const c1=card("月台視角（各道口放車序）",
+        "含加班等全部班次，依常用月台分組、放車時間排序，看每個道口的使用序與空檔",null);
+      c1.querySelector(".scroll-x").innerHTML=
+        `<div class="mx-wrap"><table class="mx"><thead>${HEAD(true)}</thead><tbody>${body||`<tr><td colspan="13" style="color:var(--muted)">無資料</td></tr>`}</tbody></table></div>`;
+      holder.append(c1);
+    }
+
+    if(view==="trip"&&ot.length){
+      const c2=card("無表定班次參考（加班、追加、過路）",
+        "沒有表定時間可比，列「平常實際放車」供排道口參考，依時間排序",null);
+      const body2=ot.filter(t=>t.actMed!=null).map(t=>
+        `<tr><td>${esc(t.name)}</td><td><span class="cat-pill" style="background:${CATC[t.cat]}">${t.cat}</span></td>`+
+        `<td>${esc(t.dest)}</td><td class="c">${esc(t.plat||"–")}</td>`+
+        `<td class="num"><b>${timeCell(t.actMed)}</b></td><td class="num">${rangeCell(t)}</td>`+
+        `<td class="num">${timeCell(t.sealMed)}</td><td class="num">${t.days.size} 天</td></tr>`).join("");
+      c2.querySelector(".scroll-x").innerHTML=
+        `<div class="mx-wrap"><table class="mx"><thead><tr><th>班次</th><th>類別</th><th>迄站</th><th>月台</th><th>平常放車</th><th>常態區間</th><th>封櫃中位</th><th>出現</th></tr></thead><tbody>${body2}</tbody></table></div>`;
+      holder.append(c2);
+    }
+  }
+  q.addEventListener("input",()=>{clearTimeout(q._t); q._t=setTimeout(draw,250);});
+  draw();
+}
+
 function pOvertime(root){
   const rows=filtered(), trips=[...tripMap(rows).values()].filter(t=>!t.canceled);
   const ot=trips.filter(t=>t.category==="加班"||t.category==="增開");
@@ -982,7 +1145,7 @@ function pDetail(root){
 }
 
 /* ---------- render ---------- */
-const PANELS={ov:pOverview,rs:pRoster,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
+const PANELS={ov:pOverview,rs:pRoster,tm:pTiming,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
 let CUR="ov";
 function render(){
   const root=$("#p-"+CUR);
