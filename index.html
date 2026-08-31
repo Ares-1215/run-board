@@ -235,6 +235,7 @@ footer .wrap{display:grid; gap:4px}
   <button class="tab on" data-p="ov">總覽</button>
   <button class="tab" data-p="rs">班次名冊</button>
   <button class="tab" data-p="tm">放車時刻</button>
+  <button class="tab" data-p="dp">深度分析</button>
   <button class="tab" data-p="ot">加班分析</button>
   <button class="tab" data-p="dl">準點延誤</button>
   <button class="tab" data-p="ld">積載運能</button>
@@ -258,6 +259,7 @@ footer .wrap{display:grid; gap:4px}
   <section class="panel on" id="p-ov"></section>
   <section class="panel" id="p-rs"></section>
   <section class="panel" id="p-tm"></section>
+  <section class="panel" id="p-dp"></section>
   <section class="panel" id="p-ot"></section>
   <section class="panel" id="p-dl"></section>
   <section class="panel" id="p-ld"></section>
@@ -925,6 +927,127 @@ function pTiming(root){
   draw();
 }
 
+function pDeep(root){
+  const rows=filtered();
+  const dep=depLegs(rows);
+  const trips=[...tripMap(rows).values()];
+  const wdOf=d=>new Date(d+"T00:00").getDay();
+  const pctl=(a,p)=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);
+    const i=(s.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i);
+    return s[lo]+(s[hi]-s[lo])*(i-lo);};
+  const mode=a=>{const m={};let b=null;
+    for(const x of a){if(!x)continue;m[x]=(m[x]||0)+1;if(b==null||m[x]>m[b])b=x;}return b;};
+
+  /* --- 1. 週次趨勢 --- */
+  const monOf=d=>{const dt=new Date(d+"T00:00");dt.setDate(dt.getDate()-((dt.getDay()+6)%7));
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;};
+  const wk=new Map();
+  const wkGet=d=>{const m=monOf(d);let w=wk.get(m);
+    if(!w){w={mon:m,days:new Set(),n:0,ot:0,cx:0,delays:[],loads:[]};wk.set(m,w);}return w;};
+  for(const t of trips){const w=wkGet(t.day);w.days.add(t.day);
+    if(t.canceled)w.cx++;else{w.n++;if(t.category==="加班"||t.category==="增開")w.ot++;}}
+  for(const r of dep){const w=wkGet(r.day);
+    if(r.dep_delay_min!=null&&r.category!=="過路")w.delays.push(r.dep_delay_min);
+    if(r.load_pct!=null)w.loads.push(r.load_pct);}
+  const weeks=[...wk.values()].sort((a,b)=>a.mon.localeCompare(b.mon));
+  const wLbl=w=>`${+w.mon.slice(5,7)}/${+w.mon.slice(8)} 週`;
+
+  const c1=card("週次趨勢比較","以週一起算，每週的量與品質指標，看月內走向",
+    histChart(weeks.map(wLbl),weeks.map(w=>w.ot),{color:"var(--c2)"}));
+  c1.querySelector(".card-head h3").insertAdjacentHTML("afterend","");
+  c1.append(el("div","scroll-x",
+    `<table class="dt"><tr><th>週次</th><th>發送日</th><th>班次</th><th>加班＋增開</th><th>取消</th><th>準點率</th><th>平均延誤</th><th>平均積載</th></tr>`+
+    weeks.map(w=>{const onT=w.delays.length?w.delays.filter(v=>v<=5).length/w.delays.length*100:null;
+      return `<tr><td>${wLbl(w)}</td><td class="num">${w.days.size}</td><td class="num">${w.n.toLocaleString()}</td>`+
+      `<td class="num">${w.ot}</td><td class="num">${w.cx}</td><td class="num">${pct(onT)}</td>`+
+      `<td class="num">${fmt1(avg(w.delays))} 分</td><td class="num">${pct(avg(w.loads))}</td></tr>`;}).join("")+`</table>`));
+  c1.insertBefore(el("p","sub","長條圖＝每週加班＋增開班次數"),c1.children[2]);
+  root.append(c1);
+
+  /* --- 2. 改表建議 --- */
+  const TT=new Map();
+  for(const r of dep){
+    if(r.category!=="正班"&&r.category!=="增開")continue;
+    let t=TT.get(r.trip_code);
+    if(!t){t={name:r.trip_name,dest:destName(r.rt_to),scheds:[],acts:[],delays:[]};TT.set(r.trip_code,t);}
+    if(r.sched_dep)t.scheds.push(r.sched_dep);
+    const av=opMin(r.act_dep); if(av!=null)t.acts.push(av);
+    if(r.dep_delay_min!=null)t.delays.push(r.dep_delay_min);
+  }
+  const sug=[...TT.values()].map(t=>({...t,schedStr:mode(t.scheds),
+      md:pctl(t.delays,.5),actMed:pctl(t.acts,.5)}))
+    .filter(t=>t.delays.length>=10&&t.md!=null&&t.md>30&&t.schedStr)
+    .sort((a,b)=>b.md-a.md);
+  const c2=card("改表建議清單","樣本 10 段以上且平常晚超過 30 分的班次：表定已與現實脫節，建議與運務處談修表。建議表定＝平常實際中位數取整 5 分",null);
+  c2.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>班次</th><th>迄站</th><th>現行表定</th><th>平常實際</th><th>通常晚</th><th>樣本</th><th>建議表定</th></tr>`+
+    (sug.length?sug.map(t=>{const nv=Math.round(t.actMed/5)*5;
+      return `<tr><td>${esc(t.name)}</td><td>${esc(t.dest)}</td><td class="num">${esc(t.schedStr)}</td>`+
+      `<td class="num">${opFmt(Math.round(t.actMed))}</td><td class="num ${t.md>60?"late-crit":"late-warn"}">${Math.round(t.md)} 分</td>`+
+      `<td class="num">${t.delays.length}</td><td class="num"><b>${opFmt(nv)}</b></td></tr>`;}).join("")
+    :`<tr><td colspan="7" style="color:var(--muted)">目前沒有符合門檻的班次</td></tr>`)+`</table>`;
+  root.append(c2);
+
+  /* --- 3. 加班成因對照 --- */
+  const D={};
+  for(const r of dep){
+    if(r.category!=="正班"||r.load_pct==null)continue;
+    const d=destName(r.rt_to)||"？";
+    const o=D[d]??={n:0,full:0,ot:0,zk:0,otLoads:[]};
+    o.n++; if(r.load_pct>=100)o.full++;
+  }
+  for(const t of trips){
+    if(t.canceled)continue;
+    const d=t.dest||"？"; const o=D[d]??={n:0,full:0,ot:0,zk:0,otLoads:[]};
+    if(t.category==="加班"){o.ot++;o.otLoads.push(...t.loads);}
+    if(t.category==="增開")o.zk++;
+  }
+  const causes=Object.entries(D).map(([d,o])=>({d,...o,
+      fullRate:o.n?o.full/o.n:0,otLoad:avg(o.otLoads)}))
+    .filter(o=>o.ot+o.zk>=3).sort((a,b)=>(b.ot+b.zk)-(a.ot+a.zk)).slice(0,15);
+  const verdict=o=>o.fullRate>=.5?`<span class="late-crit">結構性運能不足</span>`
+    :o.otLoad!=null&&o.otLoad>=85?`<span class="late-warn">貨量波動、加班有效</span>`
+    :`<span style="color:var(--muted)">檢討加班必要性</span>`;
+  const c3=card("加班成因對照（依迄站）","正班滿載率高＋加班多＝固定運能不夠；滿載率低卻常加班＝要檢討。取加班＋增開 3 班以上的線。彰化、秀水兩列為場內接駁性質，正班對照僅供參考",null);
+  c3.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>迄站</th><th>正班段</th><th>滿載段</th><th>滿載率</th><th>加班</th><th>增開</th><th>加班均積載</th><th>判讀</th></tr>`+
+    causes.map(o=>`<tr><td>${esc(o.d)}</td><td class="num">${o.n}</td><td class="num">${o.full}</td>`+
+      `<td class="num">${pct(o.fullRate*100)}</td><td class="num">${o.ot}</td><td class="num">${o.zk}</td>`+
+      `<td class="num">${pct(o.otLoad)}</td><td>${verdict(o)}</td></tr>`).join("")+`</table>`;
+  root.append(c3);
+
+  /* --- 4. 時段×月台熱圖 --- */
+  const SLOT=30,S0=900,S1=1980,N=(S1-S0)/SLOT;
+  const H={},tot={};
+  for(const r of dep){
+    if(!r.platform_load)continue;
+    const v=opMin(r.act_dep??r.sched_dep); if(v==null||v<S0||v>=S1)continue;
+    const key=STN[r.station][0]+r.platform_load;
+    (H[key]??=Array(N).fill(0))[Math.floor((v-S0)/SLOT)]++;
+    tot[key]=(tot[key]||0)+1;
+  }
+  const allKeys=Object.keys(H);
+  const keys=allKeys.filter(k=>tot[k]>=10).sort((a,b)=>{
+    if(a[0]!==b[0])return a[0]==="彰"?-1:1;
+    return (parseInt(a.slice(1))||999)-(parseInt(b.slice(1))||999);});
+  const dropped=allKeys.length-keys.length;
+  const hmax=Math.max(1,...keys.flatMap(k=>H[k]));
+  const hdr=`<tr><th>月台</th><th>合計</th>`+Array.from({length:N},(_,i)=>{
+    const m=S0+i*SLOT;
+    return `<th>${m%120===0?opFmt(m).slice(0,2)+"時":""}</th>`;}).join("")+`</tr>`;
+  const bodyH=keys.map(k=>`<tr><td>${esc(k)}</td><td class="num">${tot[k]}</td>`+
+    H[k].map((v,i)=>{const m=S0+i*SLOT;
+      return `<td class="c" ${v?`data-tt="<div class='tt-t'>${esc(k)}月台 ${opFmt(m)} 至 ${opFmt(m+SLOT)}</div>${v} 班"`:""}`+
+      ` style="padding:0;min-width:17px;height:22px;${v?`background:color-mix(in srgb, var(--c1) ${Math.round(15+85*v/hmax)}%, transparent)`:""}"></td>`;}).join("")+`</tr>`).join("");
+  const c4=card("時段×月台放車熱圖（15:00 至翌日 09:00）",
+    "顏色越深＝該道口該時段放車越密，游標停留看數字；現場排櫃避開自己道口的深色帶"+
+    (dropped?`。僅列期間合計 10 班以上的月台，另有 ${dropped} 個冷門月台未列`:""),null);
+  c4.querySelector(".scroll-x").innerHTML=
+    `<div class="mx-wrap"><table class="mx"><thead>${hdr}</thead><tbody>${bodyH}</tbody></table></div>`;
+  bindTT(c4);
+  root.append(c4);
+}
+
 function pOvertime(root){
   const rows=filtered(), trips=[...tripMap(rows).values()].filter(t=>!t.canceled);
   const ot=trips.filter(t=>t.category==="加班"||t.category==="增開");
@@ -1145,7 +1268,7 @@ function pDetail(root){
 }
 
 /* ---------- render ---------- */
-const PANELS={ov:pOverview,rs:pRoster,tm:pTiming,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
+const PANELS={ov:pOverview,rs:pRoster,tm:pTiming,dp:pDeep,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
 let CUR="ov";
 function render(){
   const root=$("#p-"+CUR);
