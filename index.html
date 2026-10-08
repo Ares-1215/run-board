@@ -446,9 +446,51 @@ const opFmt = v=>{v=v%1440; return String(Math.floor(v/60)).padStart(2,"0")+":"+
 /* 全省模式：每列=一段路順，station 即該段起站，列列皆為「本站發車」 */
 const isDep = r=>!r.canceled;
 const fromZone = r=>true;
-/* 班別歸屬（表定優先）：發送 15:00–01:00、到著 01:00–09:00、其餘為日間 */
-function shiftOf(v){ if(v==null)return null;
-  if(v>=900&&v<1500)return "發送"; if(v>=1500&&v<1980)return "到著"; return "日間"; }
+/* ---------- 班別時間窗（表定離站優先歸班） ----------
+ * op 分鐘：營運日 12:00=720 起算，跨夜時刻 +1440。
+ * 各站可自訂窗（2026-10 使用者提供桃竹區時刻）；cage:true 的窗只收籠車班（名稱含「籠」）。
+ * 未設定的站用通用預設；配定窗之外的班歸「時段外」，可看出時段外作業量。 */
+const DEFAULT_SCHEME={
+  win:[{lb:"發送",s:900,e:1500},{lb:"到著",s:1500,e:1980}],
+  residual:"日間",
+  lanes:[["發轉",900,1500],["到轉",1500,1980],["秀水籠",1350,1830],["低溫",1200,1860]]
+};
+const SHIFT_SCHEMES={
+  "2311":{win:[{lb:"到著",s:1470,e:1860}]},                              // 楊梅 00:30-07:00
+  "2086":{win:[{lb:"發送",s:1050,e:1260},{lb:"到著",s:1500,e:1860}]},    // 竹北
+  "2060":{win:[{lb:"發送",s:1050,e:1260},{lb:"到著",s:1530,e:1860}]},    // 新豐
+  "2308":{win:[{lb:"發送",s:900,e:1290},{lb:"到著",s:1500,e:1860}]},     // 平鎮
+  "2531":{win:[{lb:"發送",s:960,e:1440}]},                              // 中壢 16:00-24:00
+  "2233":{win:[{lb:"發送",s:1020,e:1440}]},                             // 鶯歌 17:00-24:00
+  "2002":{win:[{lb:"發送",s:1080,e:1470},{lb:"到著",s:1500,e:1860}]},    // 竹科 18:00-00:30
+  "2222":{win:[{lb:"籠車",s:1020,e:1380,cage:true},
+               {lb:"發送",s:900,e:1260},{lb:"到著",s:1480,e:1860}]},     // 南崁
+  "2206":{win:[{lb:"發送",s:960,e:1260},{lb:"到著",s:1560,e:1860}]},     // 桃園
+  "2208":{win:[{lb:"到著",s:1500,e:1860}]},                             // 龜山
+  "2366":{win:[{lb:"到著",s:1500,e:1860}]},                             // 新竹
+  "2104":{win:[{lb:"到著",s:1530,e:1890}]},                             // 竹東
+  "2563":{win:[{lb:"到著",s:1530,e:1890}]},                             // 大園
+  "2216":{win:[{lb:"到著",s:1500,e:1860}]},                             // 八德
+  "2088":{win:[{lb:"到著",s:1620,e:1860}]},                             // 六家 03:00-07:00
+};
+function curScheme(){
+  const sch=STSEL&&!STSEL.includes(",")?SHIFT_SCHEMES[STSEL]:null;
+  if(!sch)return DEFAULT_SCHEME;
+  return {win:sch.win, residual:"時段外", lanes:sch.win.map(w=>[w.lb,w.s,w.e])};
+}
+function shiftGroups(){
+  const c=curScheme(), out=[], seen=new Set();
+  for(const w of c.win){ if(seen.has(w.lb))continue; seen.add(w.lb);
+    out.push([w.lb,`${opFmt(w.s)} 至 ${opFmt(w.e)}`]); }
+  out.push([c.residual,""]);
+  return out;
+}
+function classShift(v,name){
+  if(v==null)return null;
+  const c=curScheme(), cage=(name||"").includes("籠");
+  for(const w of c.win){ if(w.cage&&!cage)continue; if(v>=w.s&&v<w.e)return w.lb; }
+  return c.residual;
+}
 const destName = s=>(s||"").replace(/^\d{4}/,"");
 const WD=["日","一","二","三","四","五","六"];
 
@@ -572,7 +614,7 @@ function histChart(labels, values, opts={}){
 }
 
 /* 時段分佈（30 分槽、堆疊、班別泳道） */
-function todChart(rows){
+function todChart(rows,lanes){
   const SLOT=30, S0=720, S1=2160, N=(S1-S0)/SLOT;
   const data=Array.from({length:N},()=>({}));
   for(const r of rows){
@@ -582,7 +624,7 @@ function todChart(rows){
   }
   const W=980,H=300,L=40,R=10,T=86,B=30;
   const svg=mkSvg(W,H);
-  const lanes=[["發轉",900,1500],["到轉",1500,1980],["秀水籠",1350,1830],["低溫",1200,1860]];
+  lanes=lanes||DEFAULT_SCHEME.lanes;
   const xS=v=>L+(W-L-R)*(v-S0)/(S1-S0);
   lanes.forEach((ln,i)=>{
     const y=12+i*17;
@@ -834,7 +876,7 @@ function pRoster(root){
   const q=el("input"); q.placeholder="搜班次、迄站…";
   q.style.cssText="border:1px solid var(--grid);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:14px;flex:1;min-width:160px;max-width:340px";
   const shWrap=el("div","chips");
-  for(const [lbl,v] of [["全部班別",""],["發送","發送"],["到著","到著"],["日間","日間"]]){
+  for(const [lbl,v] of [["全部班別",""],...shiftGroups().map(([g])=>[g,g])]){
     const b=el("button","chip"+(v===""?" on":""),lbl); b.dataset.sf=v;
     b.addEventListener("click",()=>{sf=v;
       shWrap.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c===b)); draw();});
@@ -856,9 +898,9 @@ function pRoster(root){
           return `<td class="c" title="${d.slice(5)} ${s==="run"?"有開":s==="cx"?"取消":"未開"}">`+
             (s==="run"?`<span class="d-run">●</span>`:s==="cx"?`<span class="d-cx">✕</span>`:`<span class="d-no">·</span>`)+`</td>`;}).join("")+`</tr>`;
     };
-    const gs=[["發送","15:00 至 01:00"],["到著","01:00 至 09:00"],["日間","09:00 至 15:00"],["時間不明",""]];
+    const gs=[...shiftGroups(),["時間不明",""]];
     const bySh={};
-    for(const t of trips){const s=t.sdep!=null?shiftOf(t.sdep):"時間不明";(bySh[s]??=[]).push(t);}
+    for(const t of trips){const s=t.sdep!=null?classShift(t.sdep,t.name):"時間不明";(bySh[s]??=[]).push(t);}
     let body="";
     for(const [s,rng] of gs){
       const list=bySh[s]||[];
@@ -887,14 +929,14 @@ function pRoster(root){
     return daysDesc.map((d,i)=>{
       let list=otByDay[d];
       if(kw)list=list.filter(t=>t.name.includes(kw)||t.dest.includes(kw));
-      if(sf)list=list.filter(t=>t.sdep!=null&&shiftOf(t.sdep)===sf);
+      if(sf)list=list.filter(t=>t.sdep!=null&&classShift(t.sdep,t.name)===sf);
       if(!list.length)return "";
       const cnt=OTC.map(c=>{const n=list.filter(t=>t.category===c&&!t.canceled).length;
         return n?`<span class="cat-pill" style="background:${CATC[c]}">${c} ${n}</span>`:"";}).filter(Boolean).join(" ");
       const cxN=list.filter(t=>t.canceled).length;
       const rows2=[...list].sort((a,b)=>OTC.indexOf(a.category)-OTC.indexOf(b.category)||((a.dep??9e9)-(b.dep??9e9)))
         .map(t=>`<tr class="${t.canceled?"cx":""}"><td><span class="cat-pill" style="background:${CATC[t.category]}">${t.category}</span></td>`+
-          `<td><span class="shift-tag">${t.sdep!=null?shiftOf(t.sdep):"–"}</span></td>`+
+          `<td><span class="shift-tag">${t.sdep!=null?classShift(t.sdep,t.name):"–"}</span></td>`+
           `<td>${esc(t.name)}</td><td>${esc(t.dest)}</td>`+
           `<td class="num">${t.canceled?"取消":t.dep!=null?opFmt(t.dep):"–"}</td>`+
           `<td class="num">${t.loads.length?pct(avg(t.loads)):"–"}</td></tr>`).join("");
@@ -1035,13 +1077,13 @@ function pTiming(root){
     holder.innerHTML="";
 
     if(view==="trip"){
-      const gs=[["發送","15:00 至 01:00"],["到著","01:00 至 09:00"],["日間","09:00 至 15:00"]];
+      const gs=shiftGroups();
       const bySh={};
-      for(const t of sched)(bySh[shiftOf(t.schedOp)]??=[]).push(t);
+      for(const t of sched)(bySh[classShift(t.schedOp,t.name)]??=[]).push(t);
       let body="";
       for(const [s,rng] of gs){
         const list=bySh[s]||[]; if(!list.length)continue;
-        body+=`<tr class="grp"><td>${s}時段　${rng}（${list.length} 班）</td><td colspan="11"></td></tr>`;
+        body+=`<tr class="grp"><td>${s}${rng?"時段　"+rng:""}（${list.length} 班）</td><td colspan="11"></td></tr>`;
         body+=list.map(t=>tripRow(t,false)).join("");
       }
       const c1=card("放車時刻表（表定 vs 平常實際）",
@@ -1289,7 +1331,7 @@ function pDelay(root){
   g.append(c2);
   root.append(g);
 
-  const c3=card("發車時段分佈","30 分鐘一格、依類別堆疊；上方橫桿是四個班別時間窗",todChart(dep));
+  const c3=card("發車時段分佈","30 分鐘一格、依類別堆疊；上方橫桿為所選站別的班別時間窗（未設定的站用通用值）",todChart(dep,curScheme().lanes));
   c3.insertBefore(el("div","",legendHtml(CATS)),c3.children[2]);
   root.append(c3);
 }
