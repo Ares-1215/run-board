@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""彰化運行表：抓 HCT 報表平台 RPT79 拆封櫃明細（起站彰化4106+秀水4150），
-分類正班/加班/增開/追加/過路，算延誤與封櫃節奏，上傳 Supabase Edge Function runsheet。
+"""全省運行表：抓 HCT 報表平台 RPT79 拆封櫃明細（起站 0000＝全省，一次查完），
+每段路順以自身起站4碼歸站，分類正班/加班/增開/追加/過路，算延誤與封櫃節奏，
+上傳 Supabase Edge Function runsheet（action=ingest_day 整日覆蓋，冪等）。
 
 用法：
   python fetch_runsheet.py                     # 昨天
-  python fetch_runsheet.py --date 20260826     # 指定單日
-  python fetch_runsheet.py --from 20260801 --to 20260826   # 回填區間
+  python fetch_runsheet.py --date 20261007     # 指定單日
+  python fetch_runsheet.py --from 20260801 --to 20260831   # 回填區間
   加 --dry-run 只存 JSON 不上傳。
+2026-10-08 起改為全省模式（原為彰化4106+秀水4150兩站查詢）。
 """
 import argparse
 import html as htmlmod
@@ -23,7 +25,6 @@ from pathlib import Path
 BASE = ("http://nls.hct.com.tw:8083/old/AA005?MemberShip="
         "89219%2c%e9%99%b3%e4%bf%a1%e5%8b%9d%2c8023%2c%e9%81%8b%e6%8c%87"
         "%2c8008%2c%e9%81%8b%e5%8b%99%2c0908%2c%e5%85%ac%e5%8f%b8%2c0%2c43")
-STATIONS = ["4106", "4150"]  # 彰化 / 秀水
 SSL_CTX = ssl._create_unverified_context()  # 公司網路 TLS 攔截，打 Supabase 需略過驗證
 
 CONFIG = json.loads((Path(__file__).parent / "config.local.json").read_text(encoding="utf-8"))
@@ -35,13 +36,13 @@ def post(body_pairs, retries=3):
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"})
     for i in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with urllib.request.urlopen(req, timeout=180) as r:
                 return r.read().decode("utf-8", errors="replace")
         except Exception as e:
             if i == retries - 1:
                 raise
             print(f"  重試 {i+1}: {e}", file=sys.stderr)
-            time.sleep(3)
+            time.sleep(5)
 
 
 def query_report(params, page=None):
@@ -74,9 +75,10 @@ def parse_rows(page_html):
     return rows, total
 
 
-def fetch_day_station(day: str, station: str):
+def fetch_day(day: str):
+    """全省單日：起站/迄站 0000，逐頁撈完。"""
     params = {"P1": day, "P2": "0000", "P3": "0000", "P4": "0", "P5": "0",
-              "P6": station, "P7": "0000", "P8": "1N", "P9": "1N", "P10": "1"}
+              "P6": "0000", "P7": "0000", "P8": "1N", "P9": "1N", "P10": "1"}
     rows, total = parse_rows(query_report(params))
     data = rows[1:] if rows else []
     for p in range(2, total + 1):
@@ -121,7 +123,9 @@ def build_legs(raw_rows):
         name = c[1].strip()
         code = name.split()[0] if name.split() else name
         canceled = c[2].strip() == "取消"
-        leg = {
+        m = re.match(r"(\d{4})", c[5] or "")
+        legs.append({
+            "station": m.group(1) if m else "0000",   # 路順起站4碼
             "category": classify(c[0].strip(), name),
             "canceled": canceled,
             "trip_code": code,
@@ -144,38 +148,38 @@ def build_legs(raw_rows):
             "cold_send": to_int(c[29]), "cold_relay": to_int(c[30]),
             "platform_unload": c[31] or None,
             "driver_from": c[32] or None, "driver_to": c[33] or None,
-        }
-        legs.append(leg)
+        })
     return legs
 
 
-def upload(day_iso: str, station: str, legs):
-    payload = {"action": "ingest", "ingest": CONFIG["ingest_token"],
-               "day": day_iso, "station": station, "legs": legs}
+def upload(day_iso: str, legs):
+    payload = {"action": "ingest_day", "ingest": CONFIG["ingest_token"],
+               "day": day_iso, "legs": legs}
     req = urllib.request.Request(CONFIG["edge_url"],
                                  data=json.dumps(payload).encode("utf-8"),
                                  method="POST",
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=180, context=SSL_CTX) as r:
+    with urllib.request.urlopen(req, timeout=300, context=SSL_CTX) as r:
         return r.read().decode("utf-8")[:200]
 
 
 def run_day(qdate: str, dry_run: bool):
     day_iso = f"{qdate[:4]}-{qdate[4:6]}-{qdate[6:]}"
-    for st in STATIONS:
-        raw = fetch_day_station(qdate, st)
-        legs = build_legs(raw)
-        cats = {}
-        for l in legs:
-            k = l["category"] + ("(取消)" if l["canceled"] else "")
-            cats[k] = cats.get(k, 0) + 1
-        print(f"{day_iso} {st}: {len(legs)} 段 {cats}")
-        if dry_run:
-            out = Path(__file__).parent / f"dry_{qdate}_{st}.json"
-            out.write_text(json.dumps(legs, ensure_ascii=False, indent=1), encoding="utf-8")
-            print(f"  （dry-run）已存 {out.name}")
-        else:
-            print("  上傳:", upload(day_iso, st, legs))
+    t0 = time.time()
+    raw = fetch_day(qdate)
+    legs = build_legs(raw)
+    cats = {}
+    for l in legs:
+        k = l["category"] + ("(取消)" if l["canceled"] else "")
+        cats[k] = cats.get(k, 0) + 1
+    nst = len({l["station"] for l in legs})
+    print(f"{day_iso} 全省: {len(legs)} 段／{nst} 站 {cats}（{time.time()-t0:.0f}s）")
+    if dry_run:
+        out = Path(__file__).parent / f"dry_{qdate}_all.json"
+        out.write_text(json.dumps(legs, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"  （dry-run）已存 {out.name}")
+    else:
+        print("  上傳:", upload(day_iso, legs))
 
 
 def main():

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>彰化發送運行看板</title>
+<title>發送運行看板</title>
 <style>
 :root{
   color-scheme: light;
@@ -210,8 +210,8 @@ footer .wrap{display:grid; gap:4px}
 
 <div id="login">
   <form class="login-card" id="loginForm">
-    <h1>彰化發送運行看板</h1>
-    <p>彰化與秀水發送運行表分析，請以工號登入</p>
+    <h1>發送運行看板</h1>
+    <p>全省發送運行表分析，請以工號登入</p>
     <div class="fld"><label for="liEmp">工號</label>
       <input id="liEmp" inputmode="numeric" autocomplete="username" required></div>
     <div class="fld"><label for="liPw">密碼</label>
@@ -223,7 +223,7 @@ footer .wrap{display:grid; gap:4px}
 
 <div id="app" class="hide">
 <header class="top"><div class="wrap top-in">
-  <div class="brand">彰化發送運行看板<small>彰化 4106 ・ 秀水 4150 ・ 拆封櫃明細</small></div>
+  <div class="brand">發送運行看板<small>全省拆封櫃明細 ・ HCT 報表平台</small></div>
   <div class="top-sp"></div>
   <span id="uname"></span>
   <button class="ubtn" id="themeBtn" title="切換主題">主題</button>
@@ -232,7 +232,8 @@ footer .wrap{display:grid; gap:4px}
 </div></header>
 
 <nav class="tabs"><div class="wrap tabs-in" id="tabbar">
-  <button class="tab on" data-p="ov">總覽</button>
+  <button class="tab on" data-p="nw">全省總覽</button>
+  <button class="tab" data-p="ov">單站總覽</button>
   <button class="tab" data-p="rs">班次名冊</button>
   <button class="tab" data-p="tm">放車時刻</button>
   <button class="tab" data-p="dp">深度分析</button>
@@ -246,17 +247,14 @@ footer .wrap{display:grid; gap:4px}
 <div class="wrap">
   <div class="filters">
     <select id="selMonth"></select>
-    <div class="chips" id="stChips">
-      <button class="chip on" data-st="">全部</button>
-      <button class="chip" data-st="4106">彰化</button>
-      <button class="chip" data-st="4150">秀水</button>
-    </div>
+    <select id="selStation"><option value="4106,4150">彰化＋秀水</option></select>
     <span id="loadState"></span>
   </div>
 </div>
 
 <main class="wrap">
-  <section class="panel on" id="p-ov"></section>
+  <section class="panel on" id="p-nw"></section>
+  <section class="panel" id="p-ov"></section>
   <section class="panel" id="p-rs"></section>
   <section class="panel" id="p-tm"></section>
   <section class="panel" id="p-dp"></section>
@@ -268,8 +266,8 @@ footer .wrap{display:grid; gap:4px}
 </main>
 
 <footer><div class="wrap">
-  <span>資料來源：HCT 報表平台【運務】拆封櫃明細查詢（起站彰化、秀水），跟承辦說「更新運行表」即抓最新一天。</span>
-  <span>準點定義：實際離站延誤 5 分鐘以內。班別時間窗：發轉 15:00 至隔日 01:00、到轉 01:00 至 09:00、秀水籠車 22:30 至 06:30、低溫 20:00 至 07:00。</span>
+  <span>資料來源：HCT 報表平台【運務】拆封櫃明細查詢（全省各起站），每天 12:30 自動更新到昨天。</span>
+  <span>準點定義：實際離站延誤 5 分鐘以內（過路加掛車不列入延誤統計）。班別時間窗以彰化為準：發轉 15:00 至隔日 01:00、到轉 01:00 至 09:00、秀水籠車 22:30 至 06:30、低溫 20:00 至 07:00。</span>
 </div></footer>
 </div>
 
@@ -293,7 +291,26 @@ footer .wrap{display:grid; gap:4px}
 const API = "https://hmqnlovyzlvvnkqmfwtt.supabase.co/functions/v1/runsheet";
 const CATS = ["正班","加班","增開","追加","過路"];
 const CATC = {正班:"var(--c1)",加班:"var(--c2)",增開:"var(--c3)",追加:"var(--c4)",過路:"var(--c5)"};
-const STN  = {"4106":"彰化","4150":"秀水"};
+let SNAME = {"4106":"彰化","4150":"秀水"};   // 起站代碼→站名，由彙總資料補齊
+/* 分區對照（沿用朝和餅舖專案 regions.js，來源：新竹物流各區.xlsx） */
+const REGION_ORDER = ["北一區","北二區","桃竹區","中區","彰嘉區","南區","未分區"];
+const STATION_REGION = {
+  "台北":"北一區","蘆洲":"北一區","八里":"北一區","北投":"北一區","新莊":"北一區","三重":"北一區","四季":"北一區",
+  "濱江":"北一區","五股":"北一區","淡水":"北一區","跨境":"北一區",
+  "基隆":"北二區","汐止":"北二區","中和":"北二區","土城":"北二區","樹林":"北二區","永和":"北二區","新店":"北二區","信義":"北二區","羅東":"北二區","花蓮":"北二區","宜蘭":"北二區",
+  "八堵":"北二區","福德":"北二區","古亭":"北二區","國陽":"北二區","玉里":"北二區","光復":"北二區","澎空":"北二區",
+  "竹科":"桃竹區","新豐":"桃竹區","竹北":"桃竹區","桃園":"桃竹區","龜山":"桃竹區","八德":"桃竹區","南崁":"桃竹區","鶯歌":"桃竹區","平鎮":"桃竹區","楊梅":"桃竹區","新竹":"桃竹區","中壢":"桃竹區","大園":"桃竹區",
+  "新富":"桃竹區","竹東":"桃竹區","六家":"桃竹區","竹南":"桃竹區","壢森":"桃竹區","酷澎":"桃竹區",
+  "苗栗":"中區","頭份":"中區","台中":"中區","大里":"中區","中工":"中區","豐原":"中區","烏日":"中區","五權":"中區","沙鹿":"中區","草屯":"中區","南投":"中區","大甲":"中區","梧棲":"中區",
+  "西屯":"中區","埔里":"中區",
+  "彰化":"彰嘉區","和美":"彰嘉區","嘉義":"彰嘉區","民雄":"彰嘉區","員林":"彰嘉區","田中":"彰嘉區","埤頭":"彰嘉區","斗六":"彰嘉區","虎尾":"彰嘉區","北港":"彰嘉區",
+  "東石":"彰嘉區","澎海":"彰嘉區","秀水":"彰嘉區",
+  "台南":"南區","安平":"南區","永康":"南區","安南":"南區","高雄":"南區","鳳山":"南區","岡山":"南區","前鎮":"南區","大社":"南區","屏東":"南區","屏工":"南區","新營":"南區","麻豆":"南區","台東":"南區","三民":"南區",
+  "金門":"南區","潮州":"南區",
+};
+const normStation = s=>String(s||"").trim().replace(/臺/g,"台");
+const regionOf = name=>STATION_REGION[normStation(name)]||"未分區";
+const stChar = code=>(SNAME[code]||code||"?")[0];
 const $ = s => document.querySelector(s);
 const el = (t,c,h)=>{const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;};
 const esc = s => String(s??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
@@ -348,9 +365,11 @@ $("#pwOk").addEventListener("click",async ev=>{
 });
 
 /* ---------- data ---------- */
-let ROWS=[];               // current month rows (objects)
-const CACHE={};            // month -> rows
-let MONTH="", STATION="";
+let ROWS=[];               // 目前月份×選定站別的明細
+let SUM=[];                // 目前月份全省彙總（日×起站×類別）
+const CACHE={};            // `${month}|${stations}` -> rows
+const SUMCACHE={};         // month -> summary rows
+let MONTH="", STSEL="4106,4150";
 function monthOptions(){
   const out=[]; const now=new Date();
   let y=2026,m=8;
@@ -360,19 +379,41 @@ function monthOptions(){
   }
   return out.reverse();
 }
+function monthRange(mon){
+  const [y,m]=mon.split("-").map(Number);
+  const to=`${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,"0")}-01`;
+  return [mon+"-01", new Date(new Date(to)-864e5).toISOString().slice(0,10)];
+}
+function buildStationSelect(){
+  const sel=$("#selStation");
+  const cur=STSEL;
+  const vol={};
+  for(const s of SUM){vol[s.station]=(vol[s.station]||0)+s.trips; if(s.sname)SNAME[s.station]=s.sname;}
+  const codes=Object.keys(vol).sort((a,b)=>vol[b]-vol[a]);
+  sel.innerHTML="";
+  sel.append(new Option("彰化＋秀水","4106,4150"));
+  for(const c of codes)sel.append(new Option(`${SNAME[c]||c}（${c}）`,c));
+  sel.value=[...sel.options].some(o=>o.value===cur)?cur:"4106,4150";
+  STSEL=sel.value;
+}
 async function loadMonth(mon){
   $("#loadState").textContent="載入中…";
   document.querySelectorAll(".panel").forEach(p=>p.style.opacity=.45);
   try{
-    if(!CACHE[mon]){
-      const from=mon+"-01";
-      const [y,m]=mon.split("-").map(Number);
-      const to=`${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,"0")}-01`;
-      const j=await api({action:"data",token:AUTH.token,from,to:new Date(new Date(to)-864e5).toISOString().slice(0,10)});
-      CACHE[mon]=j.rows.map(r=>Object.fromEntries(j.cols.map((c,i)=>[c,r[i]])));
+    const [from,to]=monthRange(mon);
+    if(!SUMCACHE[mon]){
+      const j=await api({action:"summary",token:AUTH.token,from,to});
+      SUMCACHE[mon]=j.rows.map(r=>Object.fromEntries(j.cols.map((c,i)=>[c,r[i]])));
     }
-    ROWS=CACHE[mon];
-    $("#loadState").textContent=ROWS.length?`${mon} 共 ${ROWS.length.toLocaleString()} 段`: "此月份尚無資料";
+    SUM=SUMCACHE[mon];
+    buildStationSelect();
+    const key=mon+"|"+STSEL;
+    if(!CACHE[key]){
+      const j=await api({action:"data",token:AUTH.token,from,to,stations:STSEL.split(",")});
+      CACHE[key]=j.rows.map(r=>Object.fromEntries(j.cols.map((c,i)=>[c,r[i]])));
+    }
+    ROWS=CACHE[key];
+    $("#loadState").textContent=SUM.length?`${mon} 全省 ${SUM.reduce((s,x)=>s+x.trips,0).toLocaleString()} 班／本站 ${ROWS.length.toLocaleString()} 段`:"此月份尚無資料";
   }catch(e){
     if(e.status===401){setAuth(null); location.reload(); return;}
     $("#loadState").textContent="載入失敗："+e.message;
@@ -380,20 +421,38 @@ async function loadMonth(mon){
   document.querySelectorAll(".panel").forEach(p=>p.style.opacity=1);
   render();
 }
+async function loadStation(){
+  $("#loadState").textContent="載入站別明細…";
+  try{
+    const [from,to]=monthRange(MONTH);
+    const key=MONTH+"|"+STSEL;
+    if(!CACHE[key]){
+      const j=await api({action:"data",token:AUTH.token,from,to,stations:STSEL.split(",")});
+      CACHE[key]=j.rows.map(r=>Object.fromEntries(j.cols.map((c,i)=>[c,r[i]])));
+    }
+    ROWS=CACHE[key];
+    $("#loadState").textContent=`${MONTH} 本站 ${ROWS.length.toLocaleString()} 段`;
+  }catch(e){
+    if(e.status===401){setAuth(null); location.reload(); return;}
+    $("#loadState").textContent="載入失敗："+e.message;
+  }
+  render();
+}
 
 /* ---------- helpers ---------- */
 const hm2min = t=>{if(!t)return null;const m=/^(\d{1,2}):(\d{2})/.exec(t);return m?+m[1]*60+ +m[2]:null;};
 const opMin = t=>{const v=hm2min(t); return v==null?null:(v<720?v+1440:v);};   // 營運日 12:00 起算
 const opFmt = v=>{v=v%1440; return String(Math.floor(v/60)).padStart(2,"0")+":"+String(v%60).padStart(2,"0");};
-const isDep = r=>!r.canceled && r.leg_from && (r.leg_from.startsWith("4106")||r.leg_from.startsWith("4150"));
-const fromZone = r=>r.leg_from && (r.leg_from.startsWith("4106")||r.leg_from.startsWith("4150"));
+/* 全省模式：每列=一段路順，station 即該段起站，列列皆為「本站發車」 */
+const isDep = r=>!r.canceled;
+const fromZone = r=>true;
 /* 班別歸屬（表定優先）：發送 15:00–01:00、到著 01:00–09:00、其餘為日間 */
 function shiftOf(v){ if(v==null)return null;
   if(v>=900&&v<1500)return "發送"; if(v>=1500&&v<1980)return "到著"; return "日間"; }
 const destName = s=>(s||"").replace(/^\d{4}/,"");
 const WD=["日","一","二","三","四","五","六"];
 
-function filtered(){ return STATION? ROWS.filter(r=>r.station===STATION) : ROWS; }
+function filtered(){ return ROWS; }
 /* 班次層級：key = day|trip_code|category（同班次跨彰秀只算一次） */
 function tripMap(rows){
   const m=new Map();
@@ -590,6 +649,106 @@ const kpi=(k,v,d,hero)=>el("div","kpi"+(hero?" hero":""),
   `<div class="k">${k}</div><div class="v">${v}</div>${d?`<div class="d">${d}</div>`:""}`);
 
 /* ---------- panels ---------- */
+function pNation(root){
+  const days=[...new Set(SUM.map(s=>s.day))].sort();
+  const tot=f=>SUM.reduce((a,s)=>a+(s[f]||0),0);
+  const trips=tot("trips"), dn=tot("dn"), don=tot("don"), dsum=tot("dsum"),
+        ln2=tot("ln2"), lsum=tot("lsum"), cx=tot("cx");
+  const otTrips=SUM.filter(s=>s.category==="加班"||s.category==="增開").reduce((a,s)=>a+s.trips,0);
+
+  const k=el("div","kpis");
+  k.append(
+    kpi("全省班次",`${trips.toLocaleString()} <small>班／${days.length} 天</small>`,
+        `日均 ${fmt1(trips/Math.max(1,days.length))} 班`,true),
+    kpi("加班＋增開",otTrips.toLocaleString(),`佔 ${pct(trips?otTrips/trips*100:null)}`),
+    kpi("全省準點率",pct(dn?don/dn*100:null),"延誤 5 分內"),
+    kpi("平均延誤",fmt1(dn?dsum/dn:null)+" <small>分</small>",null),
+    kpi("平均積載率",pct(ln2?lsum/ln2:null),`${ln2.toLocaleString()} 段`),
+    kpi("取消",cx.toLocaleString()+" <small>段</small>",null)
+  );
+  root.append(k);
+
+  const byDay={};
+  for(const s of SUM)(byDay[s.day]??={})[s.category]=(byDay[s.day][s.category]||0)+s.trips;
+  const c1=card("每日全省班次量","依類別堆疊，游標停留看單日明細",stackChart(days,byDay,{}));
+  c1.insertBefore(el("div","",legendHtml(CATS)),c1.children[2]);
+  root.append(c1);
+
+  /* 站別彙總 */
+  const ST={};
+  for(const s of SUM){
+    const o=ST[s.station]??={code:s.station,name:SNAME[s.station]||s.sname||s.station,
+      trips:0,ot:0,dn:0,don:0,dsum:0,ln2:0,lsum:0,lfull:0,cx:0,days:new Set()};
+    o.trips+=s.trips; o.days.add(s.day);
+    if(s.category==="加班"||s.category==="增開")o.ot+=s.trips;
+    o.dn+=s.dn; o.don+=s.don; o.dsum+=s.dsum;
+    o.ln2+=s.ln2; o.lsum+=s.lsum; o.lfull+=s.lfull; o.cx+=s.cx;
+  }
+  const stArr=Object.values(ST).map(o=>({...o,
+    region:regionOf(o.name),
+    otRate:o.trips?o.ot/o.trips*100:null,
+    onT:o.dn?o.don/o.dn*100:null,
+    avgDelay:o.dn?o.dsum/o.dn:null,
+    avgLoad:o.ln2?o.lsum/o.ln2:null,
+    fullRate:o.ln2?o.lfull/o.ln2*100:null}));
+
+  /* 分區彙總 */
+  const RG={};
+  for(const o of stArr){
+    const r=RG[o.region]??={n:0,trips:0,ot:0,dn:0,don:0,dsum:0,ln2:0,lsum:0,lfull:0,cx:0};
+    r.n++; r.trips+=o.trips; r.ot+=o.ot; r.dn+=o.dn; r.don+=o.don; r.dsum+=o.dsum;
+    r.ln2+=o.ln2; r.lsum+=o.lsum; r.lfull+=o.lfull; r.cx+=o.cx;
+  }
+  const c2=card("分區彙總","分區規則同朝和出貨專案（新竹物流各區）",null);
+  c2.querySelector(".scroll-x").innerHTML=
+    `<table class="dt"><tr><th>區</th><th>站數</th><th>班次</th><th>日均</th><th>加班＋增開</th><th>加班率</th><th>準點率</th><th>平均延誤</th><th>積載均</th><th>取消</th></tr>`+
+    REGION_ORDER.filter(rg=>RG[rg]).map(rg=>{const r=RG[rg];
+      return `<tr><td>${rg}</td><td class="num">${r.n}</td><td class="num">${r.trips.toLocaleString()}</td>`+
+      `<td class="num">${fmt1(r.trips/Math.max(1,days.length))}</td><td class="num">${r.ot}</td>`+
+      `<td class="num">${pct(r.trips?r.ot/r.trips*100:null)}</td><td class="num">${pct(r.dn?r.don/r.dn*100:null)}</td>`+
+      `<td class="num">${fmt1(r.dn?r.dsum/r.dn:null)} 分</td><td class="num">${pct(r.ln2?r.lsum/r.ln2:null)}</td>`+
+      `<td class="num">${r.cx}</td></tr>`;}).join("")+`</table>`;
+  root.append(c2);
+
+  /* 站別比較表（可排序、點站名進單站） */
+  const COLS2=[["name","站"],["trips","班次"],["ot","加班＋增開"],["otRate","加班率"],
+    ["onT","準點率"],["avgDelay","平均延誤"],["avgLoad","積載均"],["fullRate","滿載率"],["cx","取消"]];
+  let sk="trips", sa=false;
+  const c3=card("站別比較","點欄位名排序、點站名進該站的完整分析（名冊、放車時刻、深度分析都會跟著切）",null);
+  const box=c3.querySelector(".scroll-x");
+  function drawSt(){
+    const arr=[...stArr].sort((a,b)=>{
+      const x=a[sk],y=b[sk];
+      if(typeof x==="string")return sa?x.localeCompare(y):y.localeCompare(x);
+      return sa?(x??-1)-(y??-1):(y??-1)-(x??-1);});
+    box.innerHTML=`<div class="mx-wrap"><table class="mx"><thead><tr>`+
+      COLS2.map(([kk,lb])=>`<th data-k="${kk}" style="cursor:pointer">${lb}${sk===kk?(sa?" ▲":" ▼"):""}</th>`).join("")+
+      `<th>區</th></tr></thead><tbody>`+
+      arr.map(o=>`<tr><td><a href="javascript:void 0" onclick="gotoStation('${o.code}')" style="color:var(--c1);text-decoration:none;font-weight:600">${esc(o.name)}</a> <small style="color:var(--muted)">${o.code}</small></td>`+
+        `<td class="num">${o.trips.toLocaleString()}</td><td class="num">${o.ot}</td>`+
+        `<td class="num">${pct(o.otRate)}</td><td class="num">${pct(o.onT)}</td>`+
+        `<td class="num">${fmt1(o.avgDelay)} 分</td><td class="num">${pct(o.avgLoad)}</td>`+
+        `<td class="num">${pct(o.fullRate)}</td><td class="num">${o.cx}</td><td>${o.region}</td></tr>`).join("")+
+      `</tbody></table></div>`;
+    box.querySelector("thead").addEventListener("click",ev=>{
+      const th=ev.target.closest("th[data-k]"); if(!th)return;
+      if(sk===th.dataset.k)sa=!sa; else{sk=th.dataset.k; sa=false;}
+      drawSt();});
+  }
+  drawSt();
+  root.append(c3);
+
+  const g=el("div","grid g2");
+  const big=stArr.filter(o=>o.trips>=100);
+  g.append(card("加班率最高（班次 100 以上）","加班＋增開佔比，固定運能最吃緊的站",
+    barList([...big].sort((a,b)=>(b.otRate??0)-(a.otRate??0)).slice(0,10)
+      .map(o=>({n:o.name,v:Math.round((o.otRate??0)*10)/10})),"var(--c2)"," %")));
+  g.append(card("準點率最低（班次 100 以上）","表定與現實脫節最嚴重的站",
+    barList([...big].filter(o=>o.onT!=null).sort((a,b)=>a.onT-b.onT).slice(0,10)
+      .map(o=>({n:o.name,v:Math.round(o.onT*10)/10})),"var(--c1)"," %")));
+  root.append(g);
+}
+
 function pOverview(root){
   const rows=filtered(), trips=[...tripMap(rows).values()];
   const act=trips.filter(t=>!t.canceled), cx=trips.filter(t=>t.canceled);
@@ -629,13 +788,14 @@ function pOverview(root){
   const st={};
   for(const t of act)for(const s of t.stations)(st[s]??={})[t.category]=(st[s][t.category]||0)+1;
   const stBody=el("div");
-  for(const s of ["4106","4150"]){
-    if(STATION&&STATION!==s)continue;
+  const stKeys=Object.keys(st).sort((a,b)=>
+    CATS.reduce((x,c)=>x+(st[b][c]||0),0)-CATS.reduce((x,c)=>x+(st[a][c]||0),0));
+  for(const s of stKeys){
     const tot=CATS.reduce((a,c)=>a+(st[s]?.[c]||0),0);
-    stBody.append(el("div","",`<div style="font-size:13px;color:var(--ink2);margin:8px 0 4px">${STN[s]}（${tot} 班）</div>`));
+    stBody.append(el("div","",`<div style="font-size:13px;color:var(--ink2);margin:8px 0 4px">${esc(SNAME[s]||s)}（${tot} 班）</div>`));
     stBody.append(barList(CATS.map(c=>({n:c,v:st[s]?.[c]||0})).filter(i=>i.v),"var(--c1)"," 班"));
   }
-  g.append(card("兩站班次組成","同一班次跨兩站者兩邊都計",stBody));
+  g.append(card("站別班次組成","同一班次跨多站者各站都計",stBody));
 
   const wd=Array.from({length:7},()=>({n:0,d:0}));
   const dayN={}; for(const d of days)dayN[d]=new Date(d+"T00:00").getDay();
@@ -1022,7 +1182,7 @@ function pDeep(root){
   for(const r of dep){
     if(!r.platform_load)continue;
     const v=opMin(r.act_dep??r.sched_dep); if(v==null||v<S0||v>=S1)continue;
-    const key=STN[r.station][0]+r.platform_load;
+    const key=stChar(r.station)+r.platform_load;
     (H[key]??=Array(N).fill(0))[Math.floor((v-S0)/SLOT)]++;
     tot[key]=(tot[key]||0)+1;
   }
@@ -1102,7 +1262,7 @@ function pDelay(root){
     kpi("發車準點率",pct(onT),"延誤 5 分內／有規定時間者",true),
     kpi("平均延誤",fmt1(avg(dl.map(r=>r.dep_delay_min)))+" <small>分</small>","早發以負值計"),
     kpi("延誤超過 30 分",late30.toLocaleString()+" <small>段</small>",pct(dl.length?late30/dl.length*100:null)),
-    kpi("有效樣本",dl.length.toLocaleString()+" <small>段</small>","彰秀發車、未取消，不含過路車")
+    kpi("有效樣本",dl.length.toLocaleString()+" <small>段</small>","本站發車、未取消，不含過路車")
   );
   root.append(k);
 
@@ -1268,26 +1428,37 @@ function pDetail(root){
 }
 
 /* ---------- render ---------- */
-const PANELS={ov:pOverview,rs:pRoster,tm:pTiming,dp:pDeep,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
-let CUR="ov";
+const PANELS={nw:pNation,ov:pOverview,rs:pRoster,tm:pTiming,dp:pDeep,ot:pOvertime,dl:pDelay,ld:pLoad,sl:pSeal,dt:pDetail};
+let CUR="nw";
 function render(){
   const root=$("#p-"+CUR);
   document.querySelectorAll(".panel").forEach(p=>p.classList.toggle("on",p.id==="p-"+CUR));
   root.innerHTML="";
-  if(!ROWS.length){root.append(el("p","note","此月份尚無資料，請選其他月份。")); return;}
+  if(CUR==="nw"){
+    if(!SUM.length){root.append(el("p","note","此月份尚無資料，請選其他月份。")); return;}
+    pNation(root); return;
+  }
+  if(!ROWS.length){root.append(el("p","note","此月份此站尚無資料，請換月份或站別。")); return;}
   PANELS[CUR](root);
+}
+function switchTab(p){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.p===p));
+  CUR=p; render();
 }
 $("#tabbar").addEventListener("click",ev=>{
   const b=ev.target.closest(".tab"); if(!b)return;
-  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t===b));
-  CUR=b.dataset.p; render();
+  switchTab(b.dataset.p);
 });
-$("#stChips").addEventListener("click",ev=>{
-  const b=ev.target.closest(".chip"); if(!b)return;
-  document.querySelectorAll("#stChips .chip").forEach(c=>c.classList.toggle("on",c===b));
-  STATION=b.dataset.st; render();
-});
+$("#selStation").addEventListener("change",ev=>{STSEL=ev.target.value; loadStation();});
 $("#selMonth").addEventListener("change",ev=>{MONTH=ev.target.value; loadMonth(MONTH);});
+/* 全省總覽點站名 → 切到該站單站總覽 */
+function gotoStation(code){
+  STSEL=code;
+  const sel=$("#selStation");
+  if([...sel.options].some(o=>o.value===code))sel.value=code;
+  switchTab("ov");
+  loadStation();
+}
 
 function enter(){
   $("#login").classList.add("hide");
